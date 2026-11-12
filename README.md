@@ -13,7 +13,15 @@ Runs 100% on this computer: no internet, no account, no API, zero cost.
 3. Start: double-click `start.cmd` (or `npm start`). The browser opens at http://localhost:4517.
 4. Desktop shortcut, once: `npm run shortcut`.
 
-Close the "Caderno de Leitura" console window to stop the app.
+Close the "Caderno de Leitura" console window (minimized in the taskbar) to stop the app.
+Opening the shortcut again while the app runs just opens a new browser tab.
+
+## Developer scripts
+
+- `npm test`: run the tests.
+- `node scripts/make-sample-books.js <folder>`: create a sample PDF and two sample EPUBs
+  (with and without print page numbers) to test the reader.
+- `node scripts/make-icon.js`: redraw `public/icon.ico`, used by the desktop shortcut.
 
 ## Data and backup
 
