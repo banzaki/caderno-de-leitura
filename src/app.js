@@ -15,6 +15,10 @@ const MAX_BOOK_BYTES = 300 * 1024 * 1024;
 const STATIC_DIRS = {
   "/vendor/pdfjs/": join(ROOT, "node_modules", "pdfjs-dist", "build"),
   "/vendor/pdfjs-web/": join(ROOT, "node_modules", "pdfjs-dist", "web"),
+  "/vendor/pdfjs-cmaps/": join(ROOT, "node_modules", "pdfjs-dist", "cmaps"),
+  "/vendor/pdfjs-fonts/": join(ROOT, "node_modules", "pdfjs-dist", "standard_fonts"),
+  "/vendor/pdfjs-wasm/": join(ROOT, "node_modules", "pdfjs-dist", "wasm"),
+  "/vendor/pdfjs-iccs/": join(ROOT, "node_modules", "pdfjs-dist", "iccs"),
   "/vendor/epubjs/": join(ROOT, "node_modules", "epubjs", "dist"),
   "/vendor/jszip/": join(ROOT, "node_modules", "jszip", "dist"),
   "/": join(ROOT, "public"),
@@ -32,6 +36,7 @@ const MIME = {
   ".map": "application/json; charset=utf-8",
   ".pdf": "application/pdf",
   ".epub": "application/epub+zip",
+  ".wasm": "application/wasm",
 };
 
 class HttpError extends Error {

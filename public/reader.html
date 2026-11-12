@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reader · Caderno de Leitura</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/vendor/pdfjs-web/pdf_viewer.css">
+  <link rel="stylesheet" href="/reader.css">
+  <!-- epub.js needs JSZip as a global to open .epub files -->
+  <script src="/vendor/jszip/jszip.min.js"></script>
+  <script src="/vendor/epubjs/epub.min.js"></script>
+</head>
+<body class="reader-body">
+  <header class="topbar reader-bar">
+    <div class="row" style="min-width:0">
+      <a id="back-link" href="#/books" class="button secondary">← Notebook</a>
+      <strong id="book-title" class="ellipsis"></strong>
+    </div>
+    <div class="row" id="nav-controls">
+      <button class="secondary" id="prev" aria-label="Previous page">‹</button>
+      <span id="position" class="position"></span>
+      <button class="secondary" id="next" aria-label="Next page">›</button>
+    </div>
+    <div class="row" id="extra-controls"></div>
+  </header>
+
+  <div class="reader-layout">
+    <main id="stage" class="stage">
+      <div id="notice" class="notice" hidden></div>
+      <div id="pdf-view" class="pdf-view" hidden></div>
+      <div id="epub-view" class="epub-view" hidden></div>
+    </main>
+
+    <aside class="panel">
+      <h2>Notes</h2>
+      <form id="quick-note" class="stack">
+        <label for="quick-note-text">Note for <span id="quick-note-where">this page</span></label>
+        <textarea id="quick-note-text" required placeholder="What did you learn here?"></textarea>
+        <button type="submit">Add note</button>
+      </form>
+      <div id="panel-notes" style="margin-top:1rem"></div>
+    </aside>
+  </div>
+
+  <div id="selection-bar" class="selection-bar" hidden>
+    <div class="selection-quote" id="selection-quote"></div>
+    <textarea id="selection-comment" placeholder="Optional comment" hidden></textarea>
+    <div class="row">
+      <button id="hl-save">Highlight</button>
+      <button class="secondary" id="hl-comment">Highlight + comment</button>
+      <button class="ghost" id="hl-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/reader.js"></script>
+</body>
+</html>
