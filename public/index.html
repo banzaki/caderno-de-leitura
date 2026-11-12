@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caderno de Leitura</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Caderno de Leitura</a>
+    <nav>
+      <a href="#/" data-nav="today">Today</a>
+      <a href="#/books" data-nav="books">Books</a>
+      <a href="#/notes" data-nav="notes">Notes</a>
+    </nav>
+  </header>
+  <main id="view" class="container"></main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
