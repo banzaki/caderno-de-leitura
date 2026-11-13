@@ -24,5 +24,7 @@ and a PDF/EPUB reader whose highlights become notes. Single user (Don Bruno), 10
 - The server binds to 127.0.0.1 only.
 - Code, comments, UI text and commits in English.
 - Pages read count both ends: from 17 to 42 is 26 pages.
-- EPUB notes: print page when the file has a page list, otherwise a percentage, labeled as such.
+- EPUB pages: print page when the file has a page list; otherwise pages counted by the app
+  (one per `EPUB_CHARS_PER_PAGE` characters, `public/book-meta.js`), labeled "counted by the app".
+  The add-book form and the reader must use the same count (Bruno, 2026-11-13).
 - Push to GitHub (banzaki/caderno-de-leitura, private) after every working delivery.

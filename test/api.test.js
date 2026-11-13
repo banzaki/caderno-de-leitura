@@ -117,6 +117,23 @@ test("deleting a book removes its sessions, notes and file, and nothing else", a
   assert.equal((await api("GET", `/api/books/${keep}`)).data.sessions.length, 1);
 });
 
+test("EPUB notes can use pages counted by the app, and the notes list says which books can open", async () => {
+  const id = (await api("POST", "/api/books", { title: "Counted pages" })).data.id;
+  const note = await api("POST", "/api/notes", {
+    book_id: id, page: 37, page_kind: "computed", percent: 19.6, body: "x",
+    location: { type: "epub-pos", cfi: "epubcfi(/6/8!/4/2/1:0)" },
+  });
+  assert.equal(note.status, 201);
+  assert.equal(note.data.page_kind, "computed");
+  assert.equal(note.data.page, 37);
+
+  const before = (await api("GET", "/api/notes")).data.find((n) => n.id === note.data.id);
+  assert.equal(before.file_type, null);
+  await api("PUT", `/api/books/${id}/file`, new TextEncoder().encode("PK fake"), { "X-File-Name": "book.epub" });
+  const after = (await api("GET", "/api/notes")).data.find((n) => n.id === note.data.id);
+  assert.equal(after.file_type, "epub");
+});
+
 test("static files and path traversal", async () => {
   const pdfjs = await fetch(`${base}/vendor/pdfjs/pdf.min.mjs`);
   assert.equal(pdfjs.status, 200);

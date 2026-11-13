@@ -236,6 +236,10 @@ details.edit .fields { margin-top: 0.9rem; }
 .note .body { white-space: pre-wrap; }
 .note .meta { font-size: 0.8rem; color: var(--muted); display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .note .meta a { font-weight: 600; text-decoration: none; }
+.note.openable { cursor: pointer; margin: 0 -0.75rem; padding-left: 0.75rem; padding-right: 0.75rem; border-radius: 10px; transition: background 0.15s; }
+.note.openable:hover { background: #f6f1e7; }
+.note .go { color: var(--accent); font-weight: 600; opacity: 0; transition: opacity 0.15s; }
+.note.openable:hover .go { opacity: 1; }
 .page-tag { font-weight: 700; color: var(--ink); background: #f1ebe0; padding: 0.05rem 0.5rem; border-radius: 6px; }
 .empty-state { color: var(--muted); text-align: center; padding: 1.75rem 0; }
 .card.empty-state { padding: 2.5rem 1rem; }

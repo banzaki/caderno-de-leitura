@@ -10,6 +10,7 @@
 .panel { overflow: auto; background: var(--paper); border-left: 1px solid var(--line); padding: 1rem; }
 .panel .note { cursor: pointer; }
 .panel .note:hover blockquote { background: #fbf1c4; }
+.panel .note.active { background: var(--accent-soft); margin: 0 -0.5rem; padding-left: 0.5rem; padding-right: 0.5rem; border-radius: 8px; }
 
 .notice { margin: 0.75rem auto 0; max-width: 760px; background: var(--partial); color: #5e4a12;
   padding: 0.5rem 0.9rem; border-radius: 8px; font-size: 0.875rem; }
@@ -24,7 +25,7 @@
 .pdf-page .textLayer ::selection { background: rgb(47 93 80 / 0.3); }
 
 /* EPUB */
-.epub-view { height: 100%; max-width: 820px; margin: 0 auto; background: #fff; }
+#epub-view { height: 100%; max-width: 820px; margin: 0 auto; background: #fff; }
 
 .selection-bar {
   position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%); z-index: 50;

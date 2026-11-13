@@ -2,6 +2,11 @@
 // PDF or EPUB and decide which form fields to fill. No browser APIs here, so
 // `npm test` can check them in Node.
 
+// EPUBs without the printed book's page numbers get pages counted by the app:
+// one page per this many characters of text. The add-book form and the reader
+// both use it, so "Total pages" matches the pages shown while reading.
+export const EPUB_CHARS_PER_PAGE = 1500;
+
 // Titles that tools write into files by default and that say nothing about the book.
 const JUNK_TITLES = /^(untitled|unknown|document\d*|title|microsoft word\s*-.*|\s*)$/i;
 

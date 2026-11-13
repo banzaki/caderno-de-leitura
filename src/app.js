@@ -138,7 +138,7 @@ export function createApp({ dataDir }) {
       "SELECT * FROM notes WHERE book_id = ? ORDER BY page IS NULL, page, percent, created_at",
     ),
     allNotes: db.prepare(`
-      SELECT n.*, b.title FROM notes n JOIN books b ON b.id = n.book_id
+      SELECT n.*, b.title, b.file_type FROM notes n JOIN books b ON b.id = n.book_id
       ORDER BY n.created_at DESC LIMIT 500`),
     insertNote: db.prepare(`
       INSERT INTO notes (book_id, page, page_kind, percent, quote, body, location, source)
@@ -290,7 +290,7 @@ export function createApp({ dataDir }) {
       if (Number.isNaN(page) || (page !== null && page < 1)) throw new HttpError(400, "Invalid page.");
       const percent = body.percent === null || body.percent === undefined ? null : Number(body.percent);
       if (percent !== null && !(percent >= 0 && percent <= 100)) throw new HttpError(400, "Invalid percent.");
-      const pageKind = ["pdf", "print", "manual"].includes(body.page_kind) ? body.page_kind : (page ? "manual" : null);
+      const pageKind = ["pdf", "print", "computed", "manual"].includes(body.page_kind) ? body.page_kind : (page ? "manual" : null);
       const source = body.source === "highlight" ? "highlight" : "manual";
       const quote = cleanText(body.quote);
       const text = cleanText(body.body);

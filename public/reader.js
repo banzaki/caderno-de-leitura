@@ -7,9 +7,12 @@
 //   draw(note)         -> paint a saved highlight
 //   undraw(note)       -> remove a painted highlight
 //   jump(note)         -> go to the place of a note
+import { EPUB_CHARS_PER_PAGE } from "./book-meta.js";
 import { api, esc, noteLocationLabel, toast } from "./common.js";
 
-const bookId = Number(new URLSearchParams(location.search).get("book"));
+const params = new URLSearchParams(location.search);
+const bookId = Number(params.get("book"));
+const startNoteId = Number(params.get("note")) || null; // open the book at this note
 const $ = (id) => document.getElementById(id);
 
 let book;
@@ -46,6 +49,18 @@ async function start() {
   renderPanel();
   wireSelectionBar();
   wireQuickNote();
+  const startNote = startNoteId && notes.find((n) => n.id === startNoteId);
+  if (startNote) goToNote(startNote);
+}
+
+// Goes to a note's place in the book and marks it in the panel.
+function goToNote(note) {
+  reader.jump(note);
+  for (const el of document.querySelectorAll("#panel-notes .note")) {
+    const active = Number(el.dataset.id) === note.id;
+    el.classList.toggle("active", active);
+    if (active) el.scrollIntoView({ block: "nearest" });
+  }
 }
 
 function parseNote(note) {
@@ -57,6 +72,10 @@ function parseNote(note) {
 function showNotice(text) {
   $("notice").textContent = text;
   $("notice").hidden = false;
+}
+
+function hideNotice() {
+  $("notice").hidden = true;
 }
 
 // Saves where the reader is, so the book reopens at the same place. Waits a moment
@@ -89,7 +108,7 @@ function renderPanel() {
     el.addEventListener("click", (e) => {
       if (e.target.closest("[data-delete]")) return;
       const note = notes.find((n) => n.id === Number(el.dataset.id));
-      if (note) reader.jump(note);
+      if (note) goToNote(note);
     }),
   );
   list.querySelectorAll("[data-delete]").forEach((btn) =>
@@ -260,6 +279,8 @@ async function openPdf() {
     if (myRender !== renderId) return; // the user already moved to another page
     await new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: textLayer, viewport }).render();
     if (myRender !== renderId) return;
+    if (textLayer.textContent.trim()) hideNotice();
+    else showNotice("This page is a scanned image, so its text cannot be selected or highlighted. You can still add a note for this page.");
 
     view.replaceChildren(el);
     pageEl = el;
@@ -396,25 +417,45 @@ async function openEpub() {
 
   const printPages = await buildPrintPages(epub);
   const cfiTool = new ePub.CFI();
-  let locationsReady = null;
-  if (!printPages.length) {
-    showNotice("This EPUB has no print page numbers, so notes use the position in the book as a percentage.");
-    locationsReady = epub.locations.generate(1200);
+  // Highlights and counted pages are stored as ranges (start..end). Going to a range
+  // makes epub.js open the start of the chapter, so go to the range's first point.
+  const startOf = (cfi) => {
+    const point = new ePub.CFI(cfi);
+    if (point.range) point.collapse(true);
+    return point.toString();
+  };
+  const goTo = (cfi) => rendition.display(startOf(cfi));
+
+  // Pages as a list of { page, cfi } where cfi is the point where the page starts:
+  // the print edition's numbers when the file has them, otherwise pages counted by
+  // the app (one per EPUB_CHARS_PER_PAGE characters, the same count as "Add a book").
+  let pagesReady;
+  if (printPages.length) {
+    pagesReady = Promise.resolve({ kind: "print", marks: printPages });
+  } else {
+    showNotice("This EPUB has no print page numbers, so the app counts pages itself (about 1,500 characters each). They stay the same at any window size, but do not match the printed book.");
+    $("position").textContent = "Counting pages…";
+    pagesReady = epub.locations.generate(EPUB_CHARS_PER_PAGE).then(() => ({
+      kind: "computed",
+      marks: Array.from({ length: epub.locations.length() }, (_, i) => ({
+        page: i + 1,
+        cfi: startOf(epub.locations.cfiFromLocation(i)),
+      })),
+    }));
   }
 
+  // The page that contains a position: the last page that starts at or before it.
   async function whereFor(cfi) {
-    if (printPages.length) {
-      let found = null;
-      for (const mark of printPages) {
-        if (cfiTool.compare(mark.cfi, cfi) <= 0) found = mark;
-        else break;
-      }
-      // Before the first numbered page (cover, preface): use the first number.
-      return { page: (found ?? printPages[0]).page, page_kind: "print" };
+    const { kind, marks } = await pagesReady;
+    let found = null;
+    for (const mark of marks) {
+      if (cfiTool.compare(mark.cfi, cfi) <= 0) found = mark;
+      else break;
     }
-    await locationsReady;
-    const fraction = epub.locations.percentageFromCfi(cfi) ?? 0;
-    return { percent: Math.round(fraction * 1000) / 10 };
+    // Before the first page (cover, preface): use the first number.
+    const where = { page: (found ?? marks[0]).page, page_kind: kind };
+    if (kind === "computed") where.percent = Math.round((epub.locations.percentageFromCfi(cfi) ?? 0) * 1000) / 10;
+    return where;
   }
 
   let currentCfi = null;
@@ -423,7 +464,13 @@ async function openEpub() {
     rememberLocation(currentCfi);
     const where = await whereFor(currentCfi);
     if (currentCfi !== loc.start.cfi) return;
-    $("position").textContent = where.page ? `Page ${where.page} (print)` : `${where.percent.toFixed(1)}%`;
+    // A screen can show the end of one page and the start of the next: "Pages 40–41".
+    const last = (await whereFor(loc.end.cfi)).page;
+    if (currentCfi !== loc.start.cfi) return;
+    const pages = last > where.page ? `Pages ${where.page}–${last}` : `Page ${where.page}`;
+    $("position").textContent = where.page_kind === "print"
+      ? `${pages} (print)`
+      : `${pages} of ${(await pagesReady).marks.length}`;
     updateQuickNoteLabel();
   });
 
@@ -471,16 +518,22 @@ async function openEpub() {
   await rendition.display(book.last_location || undefined).catch(() => rendition.display());
 
   return {
-    where: async () => (currentCfi ? whereFor(currentCfi) : {}),
+    // Quick notes also keep the exact position, so "go to note" lands on the same screen.
+    where: async () => (currentCfi ? { ...(await whereFor(currentCfi)), location: { type: "epub-pos", cfi: currentCfi } } : {}),
     draw,
     undraw: (note) => { if (note.loc?.type === "epub") rendition.annotations.remove(note.loc.cfi, "highlight"); },
-    jump: (note) => {
-      if (note.loc?.cfi) return rendition.display(note.loc.cfi);
-      const mark = note.page && printPages.find((m) => m.page === note.page);
-      if (mark) return rendition.display(mark.cfi);
-      if (note.percent !== null && note.percent !== undefined && locationsReady) {
-        locationsReady.then(() => rendition.display(epub.locations.cfiFromPercentage(note.percent / 100)));
+    jump: async (note) => {
+      if (note.loc?.cfi) return goTo(note.loc.cfi);
+      const { kind, marks } = await pagesReady;
+      if (note.page) {
+        // The last page at or before the note's page (print numbers can skip).
+        const mark = [...marks].reverse().find((m) => m.page <= note.page) ?? marks[0];
+        return goTo(mark.cfi);
       }
+      if (kind === "computed" && note.percent !== null && note.percent !== undefined) {
+        return goTo(epub.locations.cfiFromPercentage(note.percent / 100));
+      }
+      return undefined;
     },
   };
 }

@@ -39,8 +39,11 @@ its file. It cannot be undone, so the app asks first.
 
 - **PDF:** the exact page.
 - **EPUB:** EPUB text reflows, so it has no fixed pages. When the file includes the printed
-  book's page numbers, the note uses them. Otherwise it records the position as a percentage,
-  and the screen says so.
+  book's page numbers, the app uses them. Otherwise the app counts pages itself, one page per
+  1,500 characters of text (like reading apps such as Lithium do). These pages stay the same at
+  any window size, but they do not match the printed book, and the screen says so.
+
+Click a note (on the book page or on Notes) to open the reader at that place.
 
 ## Stack
 

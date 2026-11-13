@@ -1,6 +1,6 @@
 // Reads title, author and page count from a PDF or EPUB chosen on the computer,
 // before it is uploaded. Uses the same local libraries as the reader.
-import { bookInfoFromMeta, totalFromPageList } from "./book-meta.js";
+import { EPUB_CHARS_PER_PAGE, bookInfoFromMeta, totalFromPageList } from "./book-meta.js";
 
 export function fileKind(file) {
   const name = file.name.toLowerCase();
@@ -9,7 +9,7 @@ export function fileKind(file) {
   return null;
 }
 
-// Returns { title, author, totalPages }. Fields the file does not have come back
+// Returns { title, author, totalPages, pagesCounted }. Fields the file does not have come back
 // empty (title falls back to the file name). Never throws for a damaged file:
 // the book can still be added by hand.
 export async function readBookFileInfo(file) {
@@ -21,7 +21,7 @@ export async function readBookFileInfo(file) {
   } catch (err) {
     console.warn("Could not read details from the file:", err);
   }
-  return bookInfoFromMeta({ ...raw, fileName: file.name });
+  return { ...bookInfoFromMeta({ ...raw, fileName: file.name }), pagesCounted: raw.pagesCounted === true };
 }
 
 async function readPdf(file) {
@@ -74,12 +74,11 @@ async function readEpub(file) {
   try {
     await epub.ready;
     const meta = epub.packaging?.metadata ?? {};
-    return {
-      title: meta.title,
-      author: meta.creator,
-      // Only the print edition's page list gives real page numbers; otherwise Bruno types them.
-      totalPages: totalFromPageList(epub.pageList?.pageList),
-    };
+    const printTotal = totalFromPageList(epub.pageList?.pageList);
+    if (printTotal) return { title: meta.title, author: meta.creator, totalPages: printTotal };
+    // No print page numbers: count pages the same way the reader does.
+    await epub.locations.generate(EPUB_CHARS_PER_PAGE);
+    return { title: meta.title, author: meta.creator, totalPages: epub.locations.length(), pagesCounted: true };
   } finally {
     epub.destroy();
   }

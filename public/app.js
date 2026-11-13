@@ -290,8 +290,10 @@ async function renderBooks() {
       const fields = Object.fromEntries(Object.entries(metaInputs).map(([k, el]) => [k, { value: el.value, typed: el.dataset.typed === "yes" }]));
       const fill = fieldsToFill(fields, info);
       for (const [key, value] of Object.entries(fill)) metaInputs[key].value = value;
-      const missing = fileKind(file) === "epub" && !info.totalPages && !metaInputs.totalPages.value
-        ? " This EPUB has no print page numbers: type the total pages if you know them." : "";
+      const missing = info.pagesCounted
+        ? " This EPUB has no print page numbers, so pages are counted by the app (they will not match the printed book)."
+        : fileKind(file) === "epub" && !info.totalPages && !metaInputs.totalPages.value
+          ? " Type the total pages if you know them." : "";
       hint.textContent = `Will be attached to the book. Click to pick another file.${missing}`;
     });
   });
@@ -393,7 +395,7 @@ async function renderBook(id) {
           <div class="wide"><label for="n-body">What did you learn?</label><textarea id="n-body" name="body" required></textarea></div>
           <div><button type="submit">Add note</button></div>
         </form>
-        <div id="book-notes" style="margin-top:1rem">${renderNoteList(book.notes, false)}</div>
+        <div id="book-notes" style="margin-top:1rem">${renderNoteList(book.notes.map((n) => ({ ...n, file_type: book.file_type })), false)}</div>
       </section>
       <section class="card">
         <h2>Reading history</h2>
@@ -466,13 +468,16 @@ async function renderBook(id) {
 
 function renderNoteList(notes, showBook) {
   if (!notes.length) return '<p class="empty-state">No notes yet.</p>';
+  // Notes of a book with a file open the reader at their place when clicked.
   return notes.map((n) => `
-    <div class="note" data-note="${n.id}">
+    <div class="note ${n.file_type ? "openable" : ""}" data-note="${n.id}"
+      ${n.file_type ? `data-open="/reader.html?book=${n.book_id}&note=${n.id}" title="Open in the reader at this place"` : ""}>
       <div class="meta">
         <span class="page-tag">${esc(noteLocationLabel(n))}</span>
         ${showBook ? `<a href="#/book/${n.book_id}">${esc(n.title)}</a>` : ""}
         ${n.source === "highlight" ? '<span class="badge">highlight</span>' : ""}
         <span style="flex:1"></span>
+        ${n.file_type ? '<span class="go">Open in reader ›</span>' : ""}
         <button class="ghost" data-edit-note="${n.id}">Edit</button>
         <button class="ghost" data-delete-note="${n.id}">Delete</button>
       </div>
@@ -482,6 +487,14 @@ function renderNoteList(notes, showBook) {
 }
 
 function wireNoteActions(root) {
+  root.querySelectorAll(".note.openable").forEach((noteEl) =>
+    noteEl.addEventListener("click", (e) => {
+      // Buttons, links, the edit box and selecting text keep working as usual.
+      if (e.target.closest("button, a, textarea") || noteEl.querySelector("textarea")) return;
+      if (!window.getSelection().isCollapsed) return;
+      location.href = noteEl.dataset.open;
+    }),
+  );
   root.querySelectorAll("[data-delete-note]").forEach((btn) =>
     btn.addEventListener("click", async () => {
       if (!confirm("Delete this note?")) return;

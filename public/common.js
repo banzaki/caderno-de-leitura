@@ -44,6 +44,7 @@ export function toast(message, isError = false) {
 export function noteLocationLabel(note) {
   if (note.page) {
     if (note.page_kind === "print") return `p. ${note.page} (print edition)`;
+    if (note.page_kind === "computed") return `p. ${note.page} (counted by the app)`;
     return `p. ${note.page}`;
   }
   if (note.percent !== null && note.percent !== undefined) {
