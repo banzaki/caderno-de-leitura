@@ -51,17 +51,21 @@ async function renderToday() {
   const left = Math.max(stats.goal - stats.today.pages, 0);
   const percent = Math.min(100, Math.round((stats.today.pages / stats.goal) * 100));
 
+  const lastRead = reading.find((b) => b.file_type) ?? null;
+
   view.innerHTML = `
     <div class="grid two">
       <section class="card">
-        <div class="goal">
-          <div class="ring" style="--p:${percent}"><div><div><strong>${stats.today.pages}</strong><br><span class="muted small">of ${stats.goal} pages</span></div></div></div>
-          <div class="stack">
+        <div class="hero">
+          <div class="ring ${left === 0 ? "done" : ""}" style="--p:${percent}"><div><div><strong>${stats.today.pages}</strong><br><span class="muted small">of ${stats.goal} pages</span></div></div></div>
+          <div>
+            <div class="eyebrow">${formatDate(today)}</div>
             <h1>${left === 0 ? "Goal reached today" : `${left} pages to go today`}</h1>
-            <div class="row">
-              <div><div class="big-number">${stats.streak}</div><div class="muted small">day streak</div></div>
-              <div style="margin-left:1.5rem"><div class="big-number">${stats.days_met}</div><div class="muted small">days on goal</div></div>
+            <div class="stats">
+              <div class="stat"><div class="big-number">${stats.streak}</div><div class="muted small">day streak</div></div>
+              <div class="stat"><div class="big-number">${stats.days_met}</div><div class="muted small">days on goal</div></div>
             </div>
+            ${lastRead ? `<a class="button secondary" style="margin-top:1rem" href="/reader.html?book=${lastRead.id}" title="${esc(lastRead.title)}">Continue reading</a>` : ""}
           </div>
         </div>
       </section>
@@ -80,16 +84,22 @@ async function renderToday() {
       </section>
     </div>
 
-    <div class="grid two" style="margin-top:1rem">
+    <div class="grid two section">
       <section class="card" id="calendar-card"></section>
-      <section class="card">
-        <h2>Recent reading</h2>
-        ${sessions.length ? `<ul class="list">${sessions.map((s) => `
-          <li><div class="grow"><strong>${esc(s.title)}</strong><div class="muted small">${formatDate(s.date)} · pages ${s.from_page}–${s.to_page}</div></div>
-          <span>${s.pages} p.</span>
-          <button class="ghost" data-delete-session="${s.id}" title="Delete this entry" aria-label="Delete this entry">✕</button></li>`).join("")}</ul>`
-        : `<p class="empty-state">Nothing logged yet.</p>`}
-      </section>
+      <div class="grid" style="align-content:start">
+        <section class="card">
+          <div class="row spread"><h2>Last 7 days</h2><span class="muted small">${stats.last7.reduce((sum, d) => sum + d.pages, 0)} pages</span></div>
+          ${renderWeek(stats)}
+        </section>
+        <section class="card">
+          <h2>Recent reading</h2>
+          ${sessions.length ? `<ul class="list">${sessions.slice(0, 8).map((s) => `
+            <li><div class="grow"><strong>${esc(s.title)}</strong><div class="muted small">${formatDate(s.date)} · pages ${s.from_page}–${s.to_page}</div></div>
+            <span class="pages-pill">${s.pages} p.</span>
+            <button class="ghost" data-delete-session="${s.id}" title="Delete this entry" aria-label="Delete this entry">✕</button></li>`).join("")}</ul>`
+          : `<p class="empty-state">Nothing logged yet.</p>`}
+        </section>
+      </div>
     </div>`;
 
   renderCalendar(stats);
@@ -142,6 +152,21 @@ async function renderToday() {
   );
 }
 
+// Seven bars, one per day, with a dashed line at the daily goal.
+function renderWeek(stats) {
+  const top = Math.max(stats.goal * 1.5, ...stats.last7.map((d) => d.pages));
+  const goalAt = (stats.goal / top) * 100;
+  return `<div class="week">${stats.last7.map((d) => {
+    const [y, m, day] = d.date.split("-").map(Number);
+    const dow = new Date(y, m - 1, day).toLocaleDateString("en-GB", { weekday: "short" });
+    const cls = [d.pages >= stats.goal ? "met" : "", d.date === stats.today.date ? "today" : ""].join(" ");
+    return `<div class="bar ${cls}" title="${formatDate(d.date)}: ${d.pages} pages">
+      <span class="num">${d.pages || ""}</span>
+      <div class="area" style="--goal:${goalAt}%"><div class="fill" style="height:${(d.pages / top) * 100}%"></div></div>
+      <span class="dow">${dow}</span></div>`;
+  }).join("")}</div>`;
+}
+
 function renderCalendar(stats) {
   const card = document.getElementById("calendar-card");
   const [y, m] = calendarMonth.split("-").map(Number);
@@ -185,15 +210,33 @@ function bookProgress(book) {
     <div class="muted small">Page ${book.current_page} of ${book.total_pages} · ${pct}%</div>`;
 }
 
+// A generated cover: the same title always gets the same colour.
+function coverHtml(book) {
+  let hash = 0;
+  for (const ch of book.title) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  return `<div class="cover c${hash % 8}" aria-hidden="true">
+    <div class="cover-title">${esc(book.title)}</div>
+    <div class="cover-author">${esc(book.author)}</div></div>`;
+}
+
+const FILE_ICON = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 12v6M9 15l3-3 3 3"/></svg>`;
+
 async function renderBooks() {
   const books = await api("GET", "/api/books");
   view.innerHTML = `
+    <div class="page-head">
+      <div><div class="eyebrow">Your shelf</div><h1>Books</h1></div>
+      <span class="muted">${books.length} book${books.length === 1 ? "" : "s"}</span>
+    </div>
     <section class="card">
       <h2>Add a book</h2>
       <form id="book-form" class="fields">
-        <div class="wide"><label for="b-file">PDF or EPUB (optional)</label>
+        <div class="wide"><label class="dropzone" id="b-drop" for="b-file">
+          <span class="icon">${FILE_ICON}</span>
+          <span><strong id="b-file-name">Choose the PDF or EPUB</strong>
+            <span class="muted small" id="b-file-hint">Or drag it here. Title, author and pages are filled from the file. Optional.</span></span>
           <input id="b-file" name="file" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip">
-          <div class="muted small" id="b-file-hint">Pick the book's file to read it here. Title, author and pages are filled from the file when it has them.</div></div>
+        </label></div>
         <div class="wide"><label for="b-title">Title</label><input id="b-title" name="title" required maxlength="300"></div>
         <div><label for="b-author">Author</label><input id="b-author" name="author" maxlength="300"></div>
         <div><label for="b-pages">Total pages</label><input id="b-pages" name="total_pages" type="number" min="1"></div>
@@ -202,15 +245,15 @@ async function renderBooks() {
         <div><button type="submit">Add book</button></div>
       </form>
     </section>
-    <section style="margin-top:1rem">
+    <section class="section">
       ${books.length ? `<div class="books">${books.map((b) => `
-        <a class="card book-card" href="#/book/${b.id}">
-          <div class="row spread"><span class="badge ${b.status}">${STATUS_LABELS[b.status]}</span>
-            ${b.file_type ? `<span class="badge">${b.file_type.toUpperCase()}</span>` : ""}</div>
-          <h3 style="margin-top:0.5rem">${esc(b.title)}</h3>
-          <div class="muted small">${esc(b.author) || "Unknown author"}</div>
+        <a class="book-card" href="#/book/${b.id}">
+          ${coverHtml(b)}
+          <div><h3>${esc(b.title)}</h3><div class="muted small">${esc(b.author) || "Unknown author"}</div></div>
           ${bookProgress(b)}
-          <div class="muted small">${b.note_count} note${b.note_count === 1 ? "" : "s"}</div>
+          <div class="tags"><span class="badge ${b.status}">${STATUS_LABELS[b.status]}</span>
+            ${b.file_type ? `<span class="badge">${b.file_type.toUpperCase()}</span>` : ""}
+            ${b.note_count ? `<span class="badge">${b.note_count} note${b.note_count === 1 ? "" : "s"}</span>` : ""}</div>
         </a>`).join("")}</div>`
       : `<div class="card empty-state">No books yet. Add the one you are reading above.</div>`}
     </section>`;
@@ -224,6 +267,11 @@ async function renderBooks() {
     input.addEventListener("input", () => { input.dataset.typed = "yes"; });
   }
   let reading = null; // the details being read from the chosen file
+  const drop = document.getElementById("b-drop");
+  const fileName = document.getElementById("b-file-name");
+  // The file input covers the whole zone, so dropping a file on it works natively.
+  fileInput.addEventListener("dragenter", () => drop.classList.add("over"));
+  for (const type of ["dragleave", "drop"]) fileInput.addEventListener(type, () => drop.classList.remove("over"));
 
   fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
@@ -233,7 +281,9 @@ async function renderBooks() {
       fileInput.value = "";
       return;
     }
-    hint.textContent = `Reading ${file.name}…`;
+    fileName.textContent = file.name;
+    drop.classList.add("has-file");
+    hint.textContent = "Reading the file…";
     const thisRead = (reading = readBookFileInfo(file));
     thisRead.then((info) => {
       if (reading !== thisRead) return; // another file was picked meanwhile
@@ -242,7 +292,7 @@ async function renderBooks() {
       for (const [key, value] of Object.entries(fill)) metaInputs[key].value = value;
       const missing = fileKind(file) === "epub" && !info.totalPages && !metaInputs.totalPages.value
         ? " This EPUB has no print page numbers: type the total pages if you know them." : "";
-      hint.textContent = `${file.name} will be attached.${missing}`;
+      hint.textContent = `Will be attached to the book. Click to pick another file.${missing}`;
     });
   });
 
@@ -295,35 +345,47 @@ async function renderBook(id) {
   const total = book.sessions.reduce((sum, s) => sum + s.pages, 0);
 
   view.innerHTML = `
-    <p><a href="#/books">← All books</a></p>
-    <div class="grid two">
-      <section class="card">
-        <div class="row spread"><h1>${esc(book.title)}</h1><span class="badge ${book.status}">${STATUS_LABELS[book.status]}</span></div>
-        <div class="muted">${esc(book.author) || "Unknown author"}</div>
-        ${bookProgress(book)}
-        <form id="edit-form" class="fields" style="margin-top:1rem">
-          <div class="wide"><label for="e-title">Title</label><input id="e-title" name="title" value="${esc(book.title)}" required maxlength="300"></div>
-          <div><label for="e-author">Author</label><input id="e-author" name="author" value="${esc(book.author)}" maxlength="300"></div>
-          <div><label for="e-pages">Total pages</label><input id="e-pages" name="total_pages" type="number" min="1" value="${book.total_pages ?? ""}"></div>
-          <div><label for="e-status">Status</label><select id="e-status" name="status">
-            ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}" ${v === book.status ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-          <div><button type="submit" class="secondary">Save changes</button></div>
-        </form>
-      </section>
+    <a class="back-link" href="#/books">← All books</a>
+    <section class="card">
+      <div class="book-hero">
+        ${coverHtml(book)}
+        <div style="min-width:0">
+          <div class="row" style="gap:0.4rem;margin-bottom:0.5rem"><span class="badge ${book.status}">${STATUS_LABELS[book.status]}</span>
+            ${book.file_type ? `<span class="badge">${book.file_type.toUpperCase()}</span>` : ""}</div>
+          <h1>${esc(book.title)}</h1>
+          <div class="author">${esc(book.author) || "Unknown author"}</div>
+          ${bookProgress(book)}
+          <div class="numbers">
+            <div><strong>${book.current_page}</strong>current page</div>
+            <div><strong>${total}</strong>pages logged</div>
+            <div><strong>${book.notes.length}</strong>note${book.notes.length === 1 ? "" : "s"}</div>
+          </div>
+          <div class="actions">
+            ${book.file_type ? `<a class="button big" href="/reader.html?book=${book.id}">Open reader</a>` : ""}
+            <label class="button secondary" for="file-input" style="margin:0">${book.file_type ? "Replace file" : "Attach PDF or EPUB"}</label>
+            <input id="file-input" class="visually-hidden" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip">
+            <span style="flex:1"></span>
+            <button class="danger" id="delete-book" type="button">Delete book</button>
+          </div>
+          ${book.file_type
+            ? `<div class="file-line">${FILE_ICON}<span>${esc(book.file_name)}</span></div>`
+            : '<p class="muted small" style="margin-top:0.6rem">Attach the PDF or EPUB of this book to read it here. Each highlight becomes a note with its page.</p>'}
+          <details class="edit">
+            <summary>Edit details</summary>
+            <form id="edit-form" class="fields">
+              <div class="wide"><label for="e-title">Title</label><input id="e-title" name="title" value="${esc(book.title)}" required maxlength="300"></div>
+              <div><label for="e-author">Author</label><input id="e-author" name="author" value="${esc(book.author)}" maxlength="300"></div>
+              <div><label for="e-pages">Total pages</label><input id="e-pages" name="total_pages" type="number" min="1" value="${book.total_pages ?? ""}"></div>
+              <div><label for="e-status">Status</label><select id="e-status" name="status">
+                ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}" ${v === book.status ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+              <div><button type="submit" class="secondary">Save changes</button></div>
+            </form>
+          </details>
+        </div>
+      </div>
+    </section>
 
-      <section class="card stack">
-        <h2>Read inside the app</h2>
-        ${book.file_type
-          ? `<p>File: <strong>${esc(book.file_name)}</strong></p>
-             <a class="button" href="/reader.html?book=${book.id}">Open reader</a>`
-          : '<p class="muted">Attach the PDF or EPUB of this book to read it here. Each highlight becomes a note with its page.</p>'}
-        <div><label for="file-input">${book.file_type ? "Replace file" : "Attach a file"} (PDF or EPUB)</label>
-          <input id="file-input" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip"></div>
-        <p class="muted small">${total} pages logged in ${book.sessions.length} session${book.sessions.length === 1 ? "" : "s"}.</p>
-      </section>
-    </div>
-
-    <div class="grid two" style="margin-top:1rem">
+    <div class="grid two section">
       <section class="card">
         <h2>Notes</h2>
         <form id="note-form" class="fields">
@@ -336,10 +398,27 @@ async function renderBook(id) {
       <section class="card">
         <h2>Reading history</h2>
         ${book.sessions.length ? `<ul class="list">${book.sessions.map((s) => `
-          <li><div class="grow">${formatDate(s.date)}<div class="muted small">pages ${s.from_page}–${s.to_page}</div></div><span>${s.pages} p.</span></li>`).join("")}</ul>`
+          <li><div class="grow">${formatDate(s.date)}<div class="muted small">pages ${s.from_page}–${s.to_page}</div></div><span class="pages-pill">${s.pages} p.</span></li>`).join("")}</ul>`
         : '<p class="empty-state">No reading logged for this book yet.</p>'}
       </section>
     </div>`;
+
+  document.getElementById("delete-book").addEventListener("click", async () => {
+    const parts = [];
+    if (book.notes.length) parts.push(`${book.notes.length} note${book.notes.length === 1 ? "" : "s"}`);
+    if (book.sessions.length) parts.push(`${book.sessions.length} reading entr${book.sessions.length === 1 ? "y" : "ies"} (${total} pages, removed from the calendar and streak)`);
+    if (book.file_type) parts.push("its file");
+    const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+    const also = parts.length ? `\n\nThis also deletes ${list}.` : "";
+    if (!confirm(`Delete "${book.title}"?${also}\n\nThis cannot be undone.`)) return;
+    try {
+      await api("DELETE", `/api/books/${id}`);
+      toast("Book deleted.");
+      location.hash = "#/books";
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 
   document.getElementById("edit-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -433,11 +512,17 @@ function wireNoteActions(root) {
 async function renderNotes() {
   const notes = await api("GET", "/api/notes");
   view.innerHTML = `
+    <div class="page-head">
+      <div><div class="eyebrow">What you learned</div><h1>Notes</h1></div>
+      <span class="muted">${notes.length} note${notes.length === 1 ? "" : "s"}</span>
+    </div>
     <section class="card">
-      <div class="row spread"><h1>All notes</h1><span class="muted">${notes.length} note${notes.length === 1 ? "" : "s"}</span></div>
       <label for="note-search">Search notes and highlights</label>
-      <input id="note-search" type="search" placeholder="Type a word…">
-      <div id="notes-list" style="margin-top:1rem"></div>
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="note-search" type="search" placeholder="Type a word…">
+      </div>
+      <div id="notes-list" style="margin-top:0.5rem"></div>
     </section>`;
 
   const listEl = document.getElementById("notes-list");

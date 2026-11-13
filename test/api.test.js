@@ -1,6 +1,6 @@
 // End-to-end test of the API against a real server and a temporary database.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -91,6 +91,30 @@ test("full flow: book, sessions, stats, notes, file", async () => {
   assert.equal((await api("DELETE", `/api/notes/${n2.data.id}`)).status, 200);
   assert.equal((await api("DELETE", `/api/sessions/${s2.data.id}`)).status, 200);
   assert.equal((await api("GET", "/api/stats?today=2026-11-12")).data.today.pages, 10);
+});
+
+test("deleting a book removes its sessions, notes and file, and nothing else", async () => {
+  const keep = (await api("POST", "/api/books", { title: "Keep me" })).data.id;
+  const gone = (await api("POST", "/api/books", { title: "Added by mistake", total_pages: 50 })).data.id;
+  await api("POST", "/api/sessions", { book_id: keep, date: "2026-11-10", from_page: 1, to_page: 5 });
+  await api("POST", "/api/sessions", { book_id: gone, date: "2026-11-10", from_page: 1, to_page: 30 });
+  await api("POST", "/api/notes", { book_id: keep, body: "kept" });
+  await api("POST", "/api/notes", { book_id: gone, body: "goes away" });
+  const pdf = new TextEncoder().encode("%PDF-1.4 fake");
+  await api("PUT", `/api/books/${gone}/file`, pdf, { "X-File-Name": "mistake.pdf" });
+  assert.ok(existsSync(join(dataDir, "books", `${gone}.pdf`)));
+
+  assert.equal((await api("DELETE", `/api/books/${gone}`)).status, 200);
+  assert.equal((await api("GET", `/api/books/${gone}`)).status, 404);
+  assert.equal((await api("DELETE", `/api/books/${gone}`)).status, 404);
+  assert.ok(!existsSync(join(dataDir, "books", `${gone}.pdf`)));
+
+  const notes = (await api("GET", "/api/notes")).data;
+  assert.ok(notes.some((n) => n.body === "kept"));
+  assert.ok(!notes.some((n) => n.body === "goes away"));
+  const stats = (await api("GET", "/api/stats?today=2026-11-12")).data;
+  assert.equal(stats.totals["2026-11-10"], 5);
+  assert.equal((await api("GET", `/api/books/${keep}`)).data.sessions.length, 1);
 });
 
 test("static files and path traversal", async () => {

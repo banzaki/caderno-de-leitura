@@ -32,6 +32,9 @@ Everything lives in the `data/` folder (never committed to Git):
 
 Backup: close the app and copy the `data/` folder.
 
+Deleting a book (button on the book page) also deletes its notes, its reading entries and
+its file. It cannot be undone, so the app asks first.
+
 ## Page numbers in highlights
 
 - **PDF:** the exact page.
@@ -43,5 +46,7 @@ Backup: close the app and copy the `data/` folder.
 
 Node.js with the built-in `node:sqlite` and `node:http`, plain HTML/CSS/JavaScript in the
 browser, PDF.js and epub.js for the reader, `node:test` for tests (`npm test`).
+Titles use the Fraunces font (SIL Open Font License), installed with npm and served locally.
+After pulling new code, run `npm install` once in case a library was added.
 Why not the SMM default stack: Bruno is learning a single language (JavaScript), and the app
 is local-only, so TypeScript, React and hosting would add weight without benefit.

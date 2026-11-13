@@ -31,7 +31,7 @@
   width: min(640px, calc(100% - 2rem)); background: var(--paper); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: 0 8px 30px rgb(0 0 0 / 0.18); padding: 0.9rem; display: grid; gap: 0.6rem;
 }
-.selection-quote { font-family: Georgia, serif; border-left: 3px solid var(--mark); padding-left: 0.6rem;
+.selection-quote { font-family: var(--serif); border-left: 3px solid var(--mark); padding-left: 0.6rem;
   max-height: 4.5em; overflow: hidden; }
 
 @media (max-width: 800px) {

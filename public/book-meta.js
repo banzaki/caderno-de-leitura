@@ -10,10 +10,26 @@ export function cleanMetaText(value) {
   return value.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
-// "Meditations_-_Marcus.pdf" -> "Meditations - Marcus"
-export function titleFromFileName(name) {
+// Windows file names cannot hold ":" or ".", so download sites write "_" instead:
+// "How to Read a Book_ The Classic Guide" and "Mortimer J_ Adler".
+function restorePunctuation(text) {
+  return text
+    .replace(/\b([A-Z])_ /g, "$1. ") // an initial: "J_ Adler" -> "J. Adler"
+    .replace(/_ /g, ": ")
+    .replace(/_+/g, " ");
+}
+
+// Title and author guessed from a file name. Names such as
+// "Title -- Author -- Edition, 1972 -- Publisher -- 231e20f5... -- Anna's Archive"
+// keep only the first two parts.
+export function infoFromFileName(name) {
   const base = String(name ?? "").replace(/\.(pdf|epub)$/i, "");
-  return cleanMetaText(base.replace(/[_]+/g, " "));
+  const parts = base.split(/\s+--\s+/).map((part) => cleanMetaText(restorePunctuation(part)));
+  return { title: parts[0] ?? "", author: parts.length > 1 ? parts[1] : "" };
+}
+
+export function titleFromFileName(name) {
+  return infoFromFileName(name).title;
 }
 
 // Total pages of an EPUB from its print page list: the highest whole page number.
@@ -31,9 +47,12 @@ export function totalFromPageList(pageList) {
 export function bookInfoFromMeta({ title, author, totalPages, fileName }) {
   const cleanTitle = cleanMetaText(title);
   const pages = Number(totalPages);
+  const fromName = infoFromFileName(fileName);
+  const hasTitle = cleanTitle && !JUNK_TITLES.test(cleanTitle);
   return {
-    title: cleanTitle && !JUNK_TITLES.test(cleanTitle) ? cleanTitle : titleFromFileName(fileName),
-    author: cleanMetaText(author),
+    title: hasTitle ? cleanTitle : fromName.title,
+    // The file name's author is only trusted when the title also came from the file name.
+    author: cleanMetaText(author) || (hasTitle ? "" : fromName.author),
     totalPages: Number.isInteger(pages) && pages > 0 ? pages : null,
   };
 }

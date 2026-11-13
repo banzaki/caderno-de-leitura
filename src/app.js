@@ -21,6 +21,7 @@ const STATIC_DIRS = {
   "/vendor/pdfjs-iccs/": join(ROOT, "node_modules", "pdfjs-dist", "iccs"),
   "/vendor/epubjs/": join(ROOT, "node_modules", "epubjs", "dist"),
   "/vendor/jszip/": join(ROOT, "node_modules", "jszip", "dist"),
+  "/vendor/fonts/": join(ROOT, "node_modules", "@fontsource-variable", "fraunces", "files"),
   "/": join(ROOT, "public"),
 };
 
@@ -37,6 +38,7 @@ const MIME = {
   ".pdf": "application/pdf",
   ".epub": "application/epub+zip",
   ".wasm": "application/wasm",
+  ".woff2": "font/woff2",
 };
 
 class HttpError extends Error {
@@ -189,6 +191,26 @@ export function createApp({ dataDir }) {
       db.prepare("UPDATE books SET title = ?, author = ?, total_pages = ?, status = ?, last_location = ? WHERE id = ?")
         .run(f.title, f.author, f.totalPages, f.status, lastLocation, id);
       return q.getBook.get(id);
+    }],
+
+    // Deletes a book with everything that belongs to it: reading sessions, notes and its file.
+    ["DELETE", /^\/api\/books\/(\d+)$/, (req, [id]) => {
+      requireBook(id);
+      db.exec("BEGIN");
+      try {
+        db.prepare("DELETE FROM notes WHERE book_id = ?").run(id);
+        db.prepare("DELETE FROM sessions WHERE book_id = ?").run(id);
+        db.prepare("DELETE FROM books WHERE id = ?").run(id);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      for (const ext of [".pdf", ".epub"]) {
+        const filePath = join(booksDir, `${id}${ext}`);
+        if (existsSync(filePath)) unlinkSync(filePath);
+      }
+      return { ok: true };
     }],
 
     ["PUT", /^\/api\/books\/(\d+)\/file$/, async (req, [id]) => {

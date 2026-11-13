@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bookInfoFromMeta, fieldsToFill, titleFromFileName, totalFromPageList } from "../public/book-meta.js";
+import { bookInfoFromMeta, fieldsToFill, infoFromFileName, titleFromFileName, totalFromPageList } from "../public/book-meta.js";
 
 test("title falls back to the file name when the file has none or a junk one", () => {
   assert.equal(titleFromFileName("Meditations_Marcus_Aurelius.pdf"), "Meditations Marcus Aurelius");
@@ -9,6 +9,18 @@ test("title falls back to the file name when the file has none or a junk one", (
   assert.equal(bookInfoFromMeta({ title: "Untitled", fileName: "Dom Casmurro.pdf" }).title, "Dom Casmurro");
   assert.equal(bookInfoFromMeta({ title: "Microsoft Word - draft.doc", fileName: "Real.pdf" }).title, "Real");
   assert.equal(bookInfoFromMeta({ title: "  The   Republic ", fileName: "x.pdf" }).title, "The Republic");
+});
+
+test("download-site file names are split into title and author", () => {
+  const name = "How to Read a Book_ The classic Guide to Intelligent Reading -- Mortimer J_ Adler, Charles Van Doren -- Revised edition, 1972 -- Simon & Schuster -- 231e20f5d8a9d8729551f38e01181b83 -- Anna’s Archive.pdf";
+  assert.deepEqual(infoFromFileName(name), {
+    title: "How to Read a Book: The classic Guide to Intelligent Reading",
+    author: "Mortimer J. Adler, Charles Van Doren",
+  });
+  assert.deepEqual(infoFromFileName("Dom Casmurro.epub"), { title: "Dom Casmurro", author: "" });
+  // A PDF without metadata takes both from the name; one with a real title keeps its own (empty) author.
+  assert.equal(bookInfoFromMeta({ title: "", author: "", fileName: name }).author, "Mortimer J. Adler, Charles Van Doren");
+  assert.equal(bookInfoFromMeta({ title: "Real Title", author: "", fileName: name }).author, "");
 });
 
 test("book info keeps author and only valid page counts", () => {
