@@ -4,6 +4,8 @@
 //   #/book/12     one book: details, file, sessions, notes
 //   #/notes       every note, with search
 import { STATUS_LABELS, api, esc, formatDate, noteLocationLabel, toast, todayLocal } from "./common.js";
+import { fileKind, readBookFileInfo } from "./book-file.js";
+import { fieldsToFill } from "./book-meta.js";
 
 const view = document.getElementById("view");
 let calendarMonth = todayLocal().slice(0, 7); // "YYYY-MM"
@@ -189,6 +191,9 @@ async function renderBooks() {
     <section class="card">
       <h2>Add a book</h2>
       <form id="book-form" class="fields">
+        <div class="wide"><label for="b-file">PDF or EPUB (optional)</label>
+          <input id="b-file" name="file" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip">
+          <div class="muted small" id="b-file-hint">Pick the book's file to read it here. Title, author and pages are filled from the file when it has them.</div></div>
         <div class="wide"><label for="b-title">Title</label><input id="b-title" name="title" required maxlength="300"></div>
         <div><label for="b-author">Author</label><input id="b-author" name="author" maxlength="300"></div>
         <div><label for="b-pages">Total pages</label><input id="b-pages" name="total_pages" type="number" min="1"></div>
@@ -210,22 +215,79 @@ async function renderBooks() {
       : `<div class="card empty-state">No books yet. Add the one you are reading above.</div>`}
     </section>`;
 
-  document.getElementById("book-form").addEventListener("submit", async (e) => {
+  const form = document.getElementById("book-form");
+  const fileInput = form.elements.file;
+  const hint = document.getElementById("b-file-hint");
+  const metaInputs = { title: form.elements.title, author: form.elements.author, totalPages: form.elements.total_pages };
+  // Remember which fields Bruno typed himself, so a file never overwrites them.
+  for (const input of Object.values(metaInputs)) {
+    input.addEventListener("input", () => { input.dataset.typed = "yes"; });
+  }
+  let reading = null; // the details being read from the chosen file
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (!fileKind(file)) {
+      toast("Only PDF and EPUB files are supported.", true);
+      fileInput.value = "";
+      return;
+    }
+    hint.textContent = `Reading ${file.name}…`;
+    const thisRead = (reading = readBookFileInfo(file));
+    thisRead.then((info) => {
+      if (reading !== thisRead) return; // another file was picked meanwhile
+      const fields = Object.fromEntries(Object.entries(metaInputs).map(([k, el]) => [k, { value: el.value, typed: el.dataset.typed === "yes" }]));
+      const fill = fieldsToFill(fields, info);
+      for (const [key, value] of Object.entries(fill)) metaInputs[key].value = value;
+      const missing = fileKind(file) === "epub" && !info.totalPages && !metaInputs.totalPages.value
+        ? " This EPUB has no print page numbers: type the total pages if you know them." : "";
+      hint.textContent = `${file.name} will be attached.${missing}`;
+    });
+  });
+
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const f = e.target.elements;
+    const f = form.elements;
+    const file = fileInput.files[0];
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
     try {
+      if (file && reading) await reading; // make sure pre-filling has finished
       const book = await api("POST", "/api/books", {
         title: f.title.value,
         author: f.author.value,
         total_pages: f.total_pages.value || null,
         status: f.status.value,
       });
-      toast("Book added.");
+      if (file) {
+        try {
+          toast(`Uploading ${file.name}…`);
+          await uploadBookFile(book.id, file);
+          toast("Book added with its file.");
+        } catch (err) {
+          toast(`Book added, but the file failed: ${err.message} Attach it again on the book page.`, true);
+        }
+      } else {
+        toast("Book added.");
+      }
       location.hash = `#/book/${book.id}`;
     } catch (err) {
       toast(err.message, true);
+      button.disabled = false;
     }
   });
+}
+
+async function uploadBookFile(id, file) {
+  const res = await fetch(`/api/books/${id}/file`, {
+    method: "PUT",
+    headers: { "X-File-Name": encodeURIComponent(file.name) },
+    body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status}).`);
+  return data;
 }
 
 async function renderBook(id) {
@@ -298,13 +360,7 @@ async function renderBook(id) {
     if (!file) return;
     toast(`Uploading ${file.name}…`);
     try {
-      const res = await fetch(`/api/books/${id}/file`, {
-        method: "PUT",
-        headers: { "X-File-Name": encodeURIComponent(file.name) },
-        body: file,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      await uploadBookFile(id, file);
       toast("File attached.");
       route();
     } catch (err) {

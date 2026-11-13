@@ -1,5 +1,5 @@
 // Creates small sample books for testing the reader:
-//   sample.pdf          5 pages of text
+//   sample.pdf          5 pages of text, with title and author
 //   sample-print.epub   EPUB with print page numbers (page list)
 //   sample-plain.epub   EPUB without page numbers (notes fall back to %)
 // Usage: node scripts/make-sample-books.js <output-folder>
@@ -38,6 +38,7 @@ function makePdf(pageCount) {
     kids.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${content} 0 R >>`));
   }
   objects[catalog - 1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`;
+  const info = add("<< /Title (Sample PDF book) /Author (Marcus Aurelius) >>");
   objects[pages - 1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(" ")}] /Count ${kids.length} >>`;
 
   let pdf = "%PDF-1.4\n";
@@ -49,7 +50,7 @@ function makePdf(pageCount) {
   const xref = pdf.length;
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   for (const o of offsets) pdf += `${String(o).padStart(10, "0")} 00000 n \n`;
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R /Info ${info} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(pdf, "latin1");
 }
 
@@ -89,6 +90,7 @@ ${withPageList ? `<nav epub:type="page-list"><ol>${pageLinks.join("")}</ol></nav
     <dc:identifier id="id">sample-${withPageList ? "print" : "plain"}</dc:identifier>
     <dc:title>Sample ${withPageList ? "with" : "without"} page numbers</dc:title>
     <dc:language>en</dc:language>
+    <dc:creator>Sample Author</dc:creator>
     <meta property="dcterms:modified">2026-11-12T00:00:00Z</meta>
   </metadata>
   <manifest>
