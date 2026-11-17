@@ -54,6 +54,20 @@
     </div>
   </div>
 
+  <dialog id="log-dialog" class="log-dialog">
+    <form id="log-form" class="fields">
+      <h2 class="wide" style="margin:0">Log this reading?</h2>
+      <p class="wide muted" id="log-summary" style="margin:0"></p>
+      <div><label for="lg-from">From page</label><input id="lg-from" name="from_page" type="number" min="1" required></div>
+      <div><label for="lg-to">To page</label><input id="lg-to" name="to_page" type="number" min="1" required></div>
+      <div class="wide row" style="justify-content:flex-end">
+        <button type="button" class="ghost" id="log-cancel">Keep reading</button>
+        <button type="button" class="secondary" id="log-skip">Not now</button>
+        <button type="submit">Log it</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script type="module" src="/reader.js"></script>
 </body>

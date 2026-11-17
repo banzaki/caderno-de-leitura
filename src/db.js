@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 export const BOOK_STATUSES = ["reading", "queued", "paused", "finished"];
 
 // Bump when the schema changes, and add the step to MIGRATIONS.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // The books table as version 1 made it. Migration 0 -> 1 builds exactly this, so the
 // later steps always start from the same table.
@@ -28,10 +28,14 @@ CREATE TABLE books (
 //   desk_position: order on the reading desk (1 = the main book), for reading and paused books.
 //   finished_at:   the day the book was finished (YYYY-MM-DD), for finished books.
 //   queue_left_position: the place the book had in the queue when it left it, so
-//                  "Back to queue" can put it back exactly there.
+//                  "Back to queue" can put it back exactly there. A book moved to the trash
+//                  keeps its queue place here too.
+//   deleted_at:    when the book was moved to the trash (restorable for 30 days), else NULL.
+//   report:        the closing report as JSON (summary, ideas, change, rating, recommend), else NULL.
+//                  A finished book without a report "owes" it.
 const BOOKS_TABLE = BOOKS_TABLE_V1.replace(
   "  queue_position INTEGER,\n",
-  "  queue_position INTEGER,\n  queue_left_position INTEGER,\n  desk_position INTEGER,\n  finished_at TEXT,\n",
+  "  queue_position INTEGER,\n  queue_left_position INTEGER,\n  desk_position INTEGER,\n  finished_at TEXT,\n  deleted_at TEXT,\n  report TEXT,\n",
 );
 
 const SCHEMA = `
@@ -61,6 +65,7 @@ CREATE TABLE IF NOT EXISTS notes (
   body TEXT NOT NULL DEFAULT '',
   location TEXT,
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'highlight')),
+  starred INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS notes_book ON notes(book_id);
@@ -94,6 +99,13 @@ const MIGRATIONS = [
   // 2 -> 3: remember the queue place of a book that leaves the queue. Only adds a column.
   (db) => {
     db.exec("ALTER TABLE books ADD COLUMN queue_left_position INTEGER");
+  },
+
+  // 3 -> 4: the trash, the closing report, and starred ("best") notes. Only adds columns.
+  (db) => {
+    db.exec("ALTER TABLE books ADD COLUMN deleted_at TEXT");
+    db.exec("ALTER TABLE books ADD COLUMN report TEXT");
+    db.exec("ALTER TABLE notes ADD COLUMN starred INTEGER NOT NULL DEFAULT 0");
   },
 ];
 

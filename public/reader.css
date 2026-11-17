@@ -42,3 +42,8 @@
   .panel { border-left: none; border-top: 1px solid var(--line); }
   .ellipsis { max-width: 60vw; }
 }
+
+/* "Log this reading?" when leaving the reader. */
+.log-dialog { border: 1px solid var(--line); border-radius: 14px; padding: 1.25rem; max-width: min(26rem, 92vw);
+  background: var(--card, #fff); color: inherit; box-shadow: 0 12px 40px rgba(0,0,0,0.25); }
+.log-dialog::backdrop { background: rgba(0,0,0,0.4); }

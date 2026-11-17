@@ -8,7 +8,7 @@
 //   undraw(note)       -> remove a painted highlight
 //   jump(note)         -> go to the place of a note
 import { EPUB_CHARS_PER_PAGE } from "./book-meta.js";
-import { api, esc, noteLocationLabel, toast } from "./common.js";
+import { api, esc, noteLocationLabel, toast, todayLocal } from "./common.js";
 
 const params = new URLSearchParams(location.search);
 const bookId = Number(params.get("book"));
@@ -19,6 +19,8 @@ let book;
 let notes = [];
 let reader;
 let pending = null; // the selection waiting for "Highlight": { quote, where, location, clear }
+let startPage = null; // the page the book was opened at
+let nowPage = null; // the page being read now
 
 start();
 
@@ -50,8 +52,56 @@ async function start() {
   updateQuickNoteLabel();
   wireSelectionBar();
   wireQuickNote();
+  wireClose();
   const startNote = startNoteId && notes.find((n) => n.id === startNoteId);
   if (startNote) goToNote(startNote);
+}
+
+// Both readers call this when the page changes. The first page seen is where reading began.
+function pageChanged(page) {
+  nowPage = page;
+  if (startPage === null) startPage = page;
+}
+
+// Leaving the reader: when pages were read past what is already logged, offer to log them.
+// Pages count both ends, and pages already logged are not counted twice.
+function wireClose() {
+  const link = $("back-link");
+  const dialog = $("log-dialog");
+  link.addEventListener("click", (e) => {
+    const from = Math.max(startPage ?? 0, book.current_page + 1);
+    const canLog = (book.status === "reading" || book.status === "paused") && startPage !== null && nowPage >= from;
+    if (!canLog) return; // just leave
+    e.preventDefault();
+    const form = $("log-form");
+    form.elements.from_page.value = from;
+    form.elements.to_page.value = book.total_pages ? Math.min(nowPage, book.total_pages) : nowPage;
+    form.elements.to_page.max = book.total_pages ?? "";
+    const show = () => {
+      const f = Number(form.elements.from_page.value);
+      const t = Number(form.elements.to_page.value);
+      $("log-summary").textContent = f && t >= f ? `You read pages ${f}–${t} (${t - f + 1} pages).` : "Check the pages.";
+    };
+    form.oninput = show;
+    show();
+    dialog.showModal();
+  });
+  $("log-skip").addEventListener("click", () => { location.href = link.href; });
+  $("log-cancel").addEventListener("click", () => dialog.close());
+  $("log-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target.elements;
+    try {
+      const s = await api("POST", "/api/sessions", {
+        book_id: book.id, from_page: Number(f.from_page.value), to_page: Number(f.to_page.value), date: todayLocal(),
+      });
+      // Reached the last page: go to the book page, where finishing is offered.
+      const done = book.total_pages && s.to_page >= book.total_pages;
+      location.href = done ? `/#/close/${book.id}` : link.href;
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 }
 
 // Goes to a note's place in the book and marks it in the panel.
@@ -367,6 +417,7 @@ async function openPdf() {
     const { page, fraction } = readPosition();
     if (document.activeElement !== pageInput) pageInput.value = page;
     rememberLocation((page + fraction).toFixed(3));
+    pageChanged(page);
     if (page !== currentPage) {
       currentPage = page;
       updateQuickNoteLabel();
@@ -585,6 +636,7 @@ async function openEpub() {
     // A screen can show the end of one page and the start of the next: "Pages 40–41".
     const last = (await whereFor(loc.end.cfi)).page;
     if (currentCfi !== loc.start.cfi) return;
+    pageChanged(where.page);
     const pages = last > where.page ? `Pages ${where.page}–${last}` : `Page ${where.page}`;
     $("position").textContent = where.page_kind === "print"
       ? `${pages} (print)`

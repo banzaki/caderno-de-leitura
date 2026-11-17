@@ -28,6 +28,9 @@ async function route() {
     } else if (hash === "#/queue") {
       setActiveNav("queue");
       await renderQueue();
+    } else if (hash === "#/trash") {
+      setActiveNav("books");
+      await renderTrash();
     } else if (hash === "#/notes") {
       setActiveNav("notes");
       await renderNotes();
@@ -368,7 +371,8 @@ async function renderBooks() {
           ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
         <div><button type="submit">Add book</button></div>
       </form>
-    </details>`;
+    </details>
+    <p class="muted small" style="text-align:center;margin-top:1.5rem"><a href="#/trash">Trash</a></p>`;
 
   view.querySelectorAll("[data-move]").forEach((btn) =>
     btn.addEventListener("click", async () => {
@@ -623,19 +627,12 @@ async function renderBook(id) {
   });
 
   document.getElementById("delete-book").addEventListener("click", async () => {
-    const parts = [];
-    if (book.notes.length) parts.push(`${book.notes.length} note${book.notes.length === 1 ? "" : "s"}`);
-    if (book.sessions.length) parts.push(`${book.sessions.length} reading entr${book.sessions.length === 1 ? "y" : "ies"} (${total} pages, removed from the calendar and streak)`);
-    if (book.file_type) parts.push("its file");
-    const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
-    const also = parts.length ? `\n\nThis also deletes ${list}.` : "";
-    const keep = book.queue_left_position
-      ? "\n\nTo keep it for later instead, cancel and use \"Back to queue\": it returns to its place in the queue."
-      : "";
-    if (!confirm(`Delete "${book.title}"?${also}\n\nThis cannot be undone.${keep}`)) return;
+    if (!confirm(`Move "${book.title}" to the trash?
+
+Its notes, reading history and file go with it. You can restore it for 30 days.`)) return;
     try {
       await api("DELETE", `/api/books/${id}`);
-      toast("Book deleted.");
+      toast("Moved to the trash. You can restore it for 30 days.");
       location.hash = "#/books";
     } catch (err) {
       toast(err.message, true);
@@ -682,6 +679,49 @@ async function renderBook(id) {
   });
 
   wireNoteActions(view);
+}
+
+// ---------- Trash ----------
+
+async function renderTrash() {
+  const trash = await api("GET", "/api/trash");
+  view.innerHTML = `
+    <a class="back-link" href="#/books">← All books</a>
+    <div class="page-head"><div><div class="eyebrow">Deleted books</div><h1>Trash</h1></div>
+      <span class="muted">${trash.length} book${trash.length === 1 ? "" : "s"}</span></div>
+    <p class="muted">A deleted book waits here for 30 days with its notes, reading history and file. Then it is erased for good.</p>
+    ${trash.length ? `<section class="card"><ul class="list">${trash.map((b) => `
+      <li><div class="grow"><strong>${esc(b.title)}</strong>
+        <div class="muted small">${esc(b.author) || "Unknown author"} · ${b.days_left} day${b.days_left === 1 ? "" : "s"} left</div></div>
+        <button class="secondary" data-restore="${b.id}">Restore</button>
+        <button class="danger" data-erase="${b.id}">Delete forever</button></li>`).join("")}</ul></section>`
+      : '<div class="card empty-state">The trash is empty.</div>'}`;
+  view.querySelectorAll("[data-restore]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      try {
+        const book = await api("POST", `/api/books/${btn.dataset.restore}/restore`);
+        toast(`"${book.title}" is back.`);
+        renderTrash();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }),
+  );
+  view.querySelectorAll("[data-erase]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const book = trash.find((b) => b.id === Number(btn.dataset.erase));
+      if (!confirm(`Delete "${book.title}" forever?
+
+Its notes, reading history and file are erased. This cannot be undone.`)) return;
+      try {
+        await api("DELETE", `/api/trash/${book.id}`);
+        toast("Deleted for good.");
+        renderTrash();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }),
+  );
 }
 
 // ---------- Queue ----------

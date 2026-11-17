@@ -75,7 +75,7 @@ test("upgrading an old database keeps every row, backs up first, and allows the 
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sessions").get().n, 2);
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM notes").get().n, 2);
       assert.equal(db.prepare("SELECT body FROM notes WHERE book_id = 1").get().body, "a note");
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
       assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
 
@@ -89,7 +89,7 @@ test("upgrading an old database keeps every row, backs up first, and allows the 
     // A backup of the old file was made, and it still holds the old data.
     const backups = readdirSync(join(dir, "backups"));
     assert.equal(backups.length, 1);
-    assert.match(backups[0], /^caderno-\d{8}-\d{6}-before-migration-3\.db$/);
+    assert.match(backups[0], /^caderno-\d{8}-\d{6}-before-migration-4\.db$/);
     const backup = new DatabaseSync(join(dir, "backups", backups[0]), { readOnly: true });
     assert.equal(backup.prepare("SELECT COUNT(*) AS n FROM books").get().n, 3);
     assert.equal(backup.prepare("PRAGMA user_version").get().user_version, 0);
@@ -127,7 +127,7 @@ test("upgrading a version 1 database adds the desk order and finish days, and ke
     v1.close();
 
     withDatabase(path, (db) => {
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
       const rows = db.prepare("SELECT id, status, queue_position, desk_position, finished_at FROM books ORDER BY id").all().map((r) => ({ ...r }));
       assert.deepEqual(rows, [
         { id: 1, status: "reading", queue_position: null, desk_position: 1, finished_at: null },
@@ -150,7 +150,7 @@ test("a brand-new database starts at the current version without a backup", () =
   const dir = mkdtempSync(join(tmpdir(), "caderno-new-"));
   try {
     withDatabase(join(dir, "caderno.db"), (db) => {
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
       db.prepare("INSERT INTO books (title, status, desk_position) VALUES ('x', 'reading', 1)").run();
     });
     assert.equal(existsSync(join(dir, "backups")), false);

@@ -93,7 +93,7 @@ test("full flow: book, sessions, stats, notes, file", async () => {
   assert.equal((await api("GET", "/api/stats?today=2026-11-12")).data.today.pages, 10);
 });
 
-test("deleting a book removes its sessions, notes and file, and nothing else", async () => {
+test("deleting a book moves it to the trash (out of lists, stats and notes); deleting there erases it for good", async () => {
   const keep = (await api("POST", "/api/books", { title: "Keep me" })).data.id;
   const gone = (await api("POST", "/api/books", { title: "Added by mistake", total_pages: 50 })).data.id;
   await api("POST", "/api/sessions", { book_id: keep, date: "2026-11-10", from_page: 1, to_page: 5 });
@@ -107,7 +107,8 @@ test("deleting a book removes its sessions, notes and file, and nothing else", a
   assert.equal((await api("DELETE", `/api/books/${gone}`)).status, 200);
   assert.equal((await api("GET", `/api/books/${gone}`)).status, 404);
   assert.equal((await api("DELETE", `/api/books/${gone}`)).status, 404);
-  assert.ok(!existsSync(join(dataDir, "books", `${gone}.pdf`)));
+  assert.ok(existsSync(join(dataDir, "books", `${gone}.pdf`)), "the file waits in the trash");
+  assert.ok(!(await api("GET", "/api/books")).data.some((b) => b.id === gone));
 
   const notes = (await api("GET", "/api/notes")).data;
   assert.ok(notes.some((n) => n.body === "kept"));
@@ -115,6 +116,13 @@ test("deleting a book removes its sessions, notes and file, and nothing else", a
   const stats = (await api("GET", "/api/stats?today=2026-11-12")).data;
   assert.equal(stats.totals["2026-11-10"], 5);
   assert.equal((await api("GET", `/api/books/${keep}`)).data.sessions.length, 1);
+
+  // Only from the trash can a book be erased for good: rows and file.
+  assert.equal((await api("DELETE", `/api/trash/${keep}`)).status, 404);
+  assert.equal((await api("DELETE", `/api/trash/${gone}`)).status, 200);
+  assert.ok(!existsSync(join(dataDir, "books", `${gone}.pdf`)));
+  assert.equal(app.db.prepare("SELECT COUNT(*) AS n FROM notes WHERE book_id = ?").get(gone).n, 0);
+  assert.equal(app.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE book_id = ?").get(gone).n, 0);
 });
 
 test("EPUB notes can use pages counted by the app, and the notes list says which books can open", async () => {

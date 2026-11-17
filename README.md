@@ -35,8 +35,15 @@ Backup: close the app and copy the `data/` folder.
 When a new version of the app needs to upgrade the database, it first saves a copy in
 `data/backups/`.
 
-Deleting a book (button on the book page) also deletes its notes, its reading entries and
-its file. It cannot be undone, so the app asks first.
+Every day the app also copies the database to `data/backups/caderno-daily-YYYYMMDD.db`
+(once a day, the last 14 are kept). Only the database is copied, not the book files.
+
+Deleting a book (button on the book page) moves it to the Trash (link at the bottom of the
+Books page) with its notes, reading history and file. It can be restored for 30 days; after
+that it is erased for good. "Delete forever" in the Trash erases it at once.
+
+When you leave the reader, it offers to log the pages you read (from where you started, or
+from the first page not yet logged, to where you stopped), and you can correct the numbers.
 
 ## Reading desk and library
 

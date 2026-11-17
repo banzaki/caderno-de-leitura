@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { BOOK_STATUSES, openDatabase } from "./db.js";
+import { dailyBackup } from "./backup.js";
 import { bookToMarkdown, exportFileName } from "./export.js";
 import { findExisting, parseQueueText } from "./queue.js";
 import { DAILY_GOAL, addDays, computeStreak, isValidDate, pagesBetween, validateSession } from "./stats.js";
@@ -124,12 +125,12 @@ export function createApp({ dataDir }) {
       SELECT b.*,
         COALESCE((SELECT MAX(to_page) FROM sessions s WHERE s.book_id = b.id), 0) AS current_page,
         (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
-      FROM books b
+      FROM books b WHERE b.deleted_at IS NULL
       ORDER BY CASE b.status WHEN 'reading' THEN 0 WHEN 'paused' THEN 1 WHEN 'finished' THEN 2 ELSE 3 END,
         b.desk_position, b.finished_at DESC, b.queue_position, b.title COLLATE NOCASE`),
     queue: db.prepare(`
       SELECT b.*, (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
-      FROM books b WHERE b.status = 'queued' ORDER BY b.queue_position, b.id`),
+      FROM books b WHERE b.status = 'queued' AND b.deleted_at IS NULL ORDER BY b.queue_position, b.id`),
     getBook: db.prepare(`
       SELECT b.*,
         COALESCE((SELECT MAX(to_page) FROM sessions s WHERE s.book_id = b.id), 0) AS current_page,
@@ -138,41 +139,44 @@ export function createApp({ dataDir }) {
     insertBook: db.prepare(`
       INSERT INTO books (title, author, total_pages, status, queue_position, desk_position, finished_at)
       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`),
-    lastQueuePosition: db.prepare("SELECT COALESCE(MAX(queue_position), 0) AS n FROM books WHERE status = 'queued'"),
-    lastDeskPosition: db.prepare("SELECT COALESCE(MAX(desk_position), 0) AS n FROM books WHERE status IN ('reading', 'paused')"),
+    lastQueuePosition: db.prepare("SELECT COALESCE(MAX(queue_position), 0) AS n FROM books WHERE status = 'queued' AND deleted_at IS NULL"),
+    lastDeskPosition: db.prepare("SELECT COALESCE(MAX(desk_position), 0) AS n FROM books WHERE status IN ('reading', 'paused') AND deleted_at IS NULL"),
     sessionsForBook: db.prepare("SELECT * FROM sessions WHERE book_id = ? ORDER BY date DESC, id DESC"),
     recentSessions: db.prepare(`
-      SELECT s.*, b.title FROM sessions s JOIN books b ON b.id = s.book_id
+      SELECT s.*, b.title FROM sessions s JOIN books b ON b.id = s.book_id WHERE b.deleted_at IS NULL
       ORDER BY s.date DESC, s.id DESC LIMIT ?`),
     insertSession: db.prepare(
       "INSERT INTO sessions (book_id, date, from_page, to_page, pages) VALUES (?, ?, ?, ?, ?) RETURNING id",
     ),
     getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
     deleteSession: db.prepare("DELETE FROM sessions WHERE id = ?"),
-    dailyTotals: db.prepare("SELECT date, SUM(pages) AS pages FROM sessions GROUP BY date"),
+    dailyTotals: db.prepare(`SELECT date, SUM(pages) AS pages FROM sessions
+      WHERE book_id IN (SELECT id FROM books WHERE deleted_at IS NULL) GROUP BY date`),
     notesForBook: db.prepare(
       "SELECT * FROM notes WHERE book_id = ? ORDER BY page IS NULL, page, percent, created_at",
     ),
     allNotes: db.prepare(`
-      SELECT n.*, b.title, b.file_type FROM notes n JOIN books b ON b.id = n.book_id
+      SELECT n.*, b.title, b.file_type FROM notes n JOIN books b ON b.id = n.book_id WHERE b.deleted_at IS NULL
       ORDER BY n.created_at DESC LIMIT 500`),
     insertNote: db.prepare(`
       INSERT INTO notes (book_id, page, page_kind, percent, quote, body, location, source)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`),
     getNote: db.prepare("SELECT * FROM notes WHERE id = ?"),
-    updateNoteBody: db.prepare("UPDATE notes SET body = ? WHERE id = ?"),
+    updateNote: db.prepare("UPDATE notes SET body = ?, starred = ? WHERE id = ?"),
+    trash: db.prepare("SELECT * FROM books WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"),
     deleteNote: db.prepare("DELETE FROM notes WHERE id = ?"),
   };
 
+  // A book in the trash counts as not found everywhere except the trash routes.
   function requireBook(id) {
     const book = q.getBook.get(id);
-    if (!book) throw new HttpError(404, "Book not found.");
+    if (!book || book.deleted_at) throw new HttpError(404, "Book not found.");
     return book;
   }
 
   // Queue positions stay 1, 2, 3... with no gaps, in their current order.
   function compactQueue() {
-    const ids = db.prepare("SELECT id FROM books WHERE status = 'queued' ORDER BY queue_position, id").all();
+    const ids = db.prepare("SELECT id FROM books WHERE status = 'queued' AND deleted_at IS NULL ORDER BY queue_position, id").all();
     const set = db.prepare("UPDATE books SET queue_position = ? WHERE id = ?");
     ids.forEach(({ id }, i) => set.run(i + 1, id));
     db.prepare("UPDATE books SET queue_position = NULL WHERE status <> 'queued'").run();
@@ -181,7 +185,7 @@ export function createApp({ dataDir }) {
   // The reading desk holds reading and paused books: 1 is the main book, then the other
   // books being read, then the paused ones. Positions stay 1, 2, 3... with no gaps.
   function compactDesk() {
-    const ids = db.prepare(`SELECT id FROM books WHERE status IN ('reading', 'paused')
+    const ids = db.prepare(`SELECT id FROM books WHERE status IN ('reading', 'paused') AND deleted_at IS NULL
       ORDER BY status = 'paused', desk_position IS NULL, desk_position, id`).all();
     const set = db.prepare("UPDATE books SET desk_position = ? WHERE id = ?");
     ids.forEach(({ id }, i) => set.run(i + 1, id));
@@ -232,6 +236,29 @@ export function createApp({ dataDir }) {
     return { title, author, totalPages, status };
   }
 
+  const TRASH_DAYS = 30;
+  const daysLeftInTrash = (deletedAt) =>
+    Math.max(TRASH_DAYS - Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86400000), 0);
+
+  // Removes a book and everything that belongs to it, for good (rows and files).
+  function eraseBook(id) {
+    inTransaction(() => {
+      db.prepare("DELETE FROM notes WHERE book_id = ?").run(id);
+      db.prepare("DELETE FROM sessions WHERE book_id = ?").run(id);
+      db.prepare("DELETE FROM books WHERE id = ?").run(id);
+    });
+    for (const ext of [".pdf", ".epub"]) {
+      const filePath = join(booksDir, `${id}${ext}`);
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  }
+
+  // Books that stayed in the trash for more than 30 days are deleted for good.
+  function purgeTrash() {
+    const limit = new Date(Date.now() - TRASH_DAYS * 86400000).toISOString();
+    for (const { id } of db.prepare("SELECT id FROM books WHERE deleted_at IS NOT NULL AND deleted_at < ?").all(limit)) eraseBook(id);
+  }
+
   const routes = [
     ["GET", /^\/api\/books$/, () => q.listBooks.all()],
 
@@ -265,7 +292,7 @@ export function createApp({ dataDir }) {
       }
       inTransaction(() => {
         if (f.status === "queued" && current.status !== "queued") {
-          db.prepare("UPDATE books SET queue_position = queue_position + 1 WHERE status = 'queued' AND queue_position >= ?")
+          db.prepare("UPDATE books SET queue_position = queue_position + 1 WHERE status = 'queued' AND deleted_at IS NULL AND queue_position >= ?")
             .run(place.queuePosition);
         }
         db.prepare(`UPDATE books SET title = ?, author = ?, total_pages = ?, status = ?, queue_position = ?,
@@ -287,7 +314,7 @@ export function createApp({ dataDir }) {
       const to = toInt((await readJson(req)).to);
       if (!Number.isInteger(to) || to < 1) throw new HttpError(400, "Send the new place as { to: 1 }.");
       inTransaction(() => {
-        const ids = db.prepare("SELECT id FROM books WHERE status = 'reading' ORDER BY desk_position, id").all()
+        const ids = db.prepare("SELECT id FROM books WHERE status = 'reading' AND deleted_at IS NULL ORDER BY desk_position, id").all()
           .map((r) => r.id).filter((other) => other !== id);
         ids.splice(Math.min(to, ids.length + 1) - 1, 0, id);
         const set = db.prepare("UPDATE books SET desk_position = ? WHERE id = ?");
@@ -304,7 +331,7 @@ export function createApp({ dataDir }) {
       const to = toInt((await readJson(req)).to);
       if (!Number.isInteger(to) || to < 1) throw new HttpError(400, "Send the new place as { to: 1 }.");
       inTransaction(() => {
-        const ids = db.prepare("SELECT id FROM books WHERE status = 'queued' ORDER BY queue_position, id").all()
+        const ids = db.prepare("SELECT id FROM books WHERE status = 'queued' AND deleted_at IS NULL ORDER BY queue_position, id").all()
           .map((r) => r.id).filter((other) => other !== id);
         ids.splice(Math.min(to, ids.length + 1) - 1, 0, id);
         const set = db.prepare("UPDATE books SET queue_position = ? WHERE id = ?");
@@ -325,20 +352,50 @@ export function createApp({ dataDir }) {
       return undefined;
     }],
 
-    // Deletes a book with everything that belongs to it: reading sessions, notes and its file.
+    // "Delete" moves a book to the trash, with its notes, reading and file, for 30 days.
+    // A queued book keeps its place for the restore.
     ["DELETE", /^\/api\/books\/(\d+)$/, (req, [id]) => {
-      requireBook(id);
+      const book = requireBook(id);
       inTransaction(() => {
-        db.prepare("DELETE FROM notes WHERE book_id = ?").run(id);
-        db.prepare("DELETE FROM sessions WHERE book_id = ?").run(id);
-        db.prepare("DELETE FROM books WHERE id = ?").run(id);
+        db.prepare(`UPDATE books SET deleted_at = ?, queue_left_position = ?, queue_position = NULL, desk_position = NULL
+          WHERE id = ?`).run(new Date().toISOString(), book.status === "queued" ? book.queue_position : book.queue_left_position, id);
         compactQueue();
         compactDesk();
       });
-      for (const ext of [".pdf", ".epub"]) {
-        const filePath = join(booksDir, `${id}${ext}`);
-        if (existsSync(filePath)) unlinkSync(filePath);
-      }
+      return { ok: true };
+    }],
+
+    ["GET", /^\/api\/trash$/, () => {
+      purgeTrash();
+      return q.trash.all().map((b) => ({ ...b, days_left: daysLeftInTrash(b.deleted_at) }));
+    }],
+
+    // Takes a book out of the trash: back to its queue place, the end of the desk, or the library.
+    ["POST", /^\/api\/books\/(\d+)\/restore$/, (req, [id]) => {
+      const book = q.getBook.get(id);
+      if (!book?.deleted_at) throw new HttpError(404, "That book is not in the trash.");
+      inTransaction(() => {
+        const end = q.lastQueuePosition.get().n + 1;
+        let queuePosition = null;
+        if (book.status === "queued") {
+          queuePosition = book.queue_left_position ? Math.min(book.queue_left_position, end) : end;
+          db.prepare("UPDATE books SET queue_position = queue_position + 1 WHERE status = 'queued' AND deleted_at IS NULL AND queue_position >= ?")
+            .run(queuePosition);
+        }
+        const deskPosition = book.status === "reading" || book.status === "paused" ? q.lastDeskPosition.get().n + 1 : null;
+        db.prepare(`UPDATE books SET deleted_at = NULL, queue_position = ?, desk_position = ?, queue_left_position = ?
+          WHERE id = ?`).run(queuePosition, deskPosition, book.status === "queued" ? null : book.queue_left_position, id);
+        compactQueue();
+        compactDesk();
+      });
+      return q.getBook.get(id);
+    }],
+
+    // Deletes a book for good, from the trash only: its notes, reading and file.
+    ["DELETE", /^\/api\/trash\/(\d+)$/, (req, [id]) => {
+      const book = q.getBook.get(id);
+      if (!book?.deleted_at) throw new HttpError(404, "That book is not in the trash.");
+      eraseBook(id);
       return { ok: true };
     }],
 
@@ -465,7 +522,9 @@ export function createApp({ dataDir }) {
     ["PATCH", /^\/api\/notes\/(\d+)$/, async (req, [id]) => {
       if (!q.getNote.get(id)) throw new HttpError(404, "Note not found.");
       const body = await readJson(req);
-      q.updateNoteBody.run(cleanText(body.body), id);
+      const note = q.getNote.get(id);
+      q.updateNote.run(body.body !== undefined ? cleanText(body.body) : note.body,
+        body.starred !== undefined ? (body.starred ? 1 : 0) : note.starred, id);
       return q.getNote.get(id);
     }],
 
@@ -500,6 +559,20 @@ export function createApp({ dataDir }) {
     }
   }
 
+  // Once a day (and at start-up) the database is copied; old trash is cleared.
+  const daily = () => {
+    try {
+      dailyBackup(db, dataDir);
+      purgeTrash();
+    } catch (err) {
+      console.error("Daily backup failed:", err.message);
+    }
+  };
+  daily();
+  const timer = setInterval(daily, 60 * 60 * 1000);
+  timer.unref();
+
   const server = createServer(handle);
+  server.on("close", () => clearInterval(timer));
   return { server, db };
 }
