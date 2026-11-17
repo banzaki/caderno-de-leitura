@@ -46,7 +46,8 @@ order), and the paused ones. Finished books move to the library below, with the 
 finished. Log pages on Today or on the book's own page; reaching the last page offers to
 finish the book. "Read again" puts a finished book back on the desk. Today opens with the book you are reading
 (or, with an empty desk, the next book in the queue). A book started from the queue can go
-"Back to queue", to the same place it had there.
+"Back to queue", to the same place it had there. On a finished book the finish day can be
+corrected, and "Export notes" downloads its notes as a Markdown file.
 
 ## Reading queue
 
@@ -57,6 +58,8 @@ Reading. To fill it, import a plain text file with one book per line:
 
 Books the notebook already has are skipped (same title, or exactly the same two or more
 authors, which catches a translated title). Importing the same file twice adds nothing.
+To reorder, hold the ⠿ handle (mouse or finger) and drag up or down; "↑ Top" sends a book to
+the first place.
 
 ## Reading
 

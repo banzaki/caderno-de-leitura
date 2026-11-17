@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { BOOK_STATUSES, openDatabase } from "./db.js";
+import { bookToMarkdown, exportFileName } from "./export.js";
 import { findExisting, parseQueueText } from "./queue.js";
 import { DAILY_GOAL, addDays, computeStreak, isValidDate, pagesBetween, validateSession } from "./stats.js";
 
@@ -257,6 +258,11 @@ export function createApp({ dataDir }) {
       // Joining the desk puts the book at the end; joining the queue puts it back where it
       // was (or at the end); leaving either closes the gap.
       const place = placeFor(f.status, current, finishedDay(body.finished_on));
+      if (f.status === "finished" && body.finished_at !== undefined) {
+        // The day can be corrected later (never in the future).
+        if (!isValidDate(body.finished_at) || body.finished_at > finishedDay(null)) throw new HttpError(400, "Send the finish day as YYYY-MM-DD, not in the future.");
+        place.finishedAt = body.finished_at;
+      }
       inTransaction(() => {
         if (f.status === "queued" && current.status !== "queued") {
           db.prepare("UPDATE books SET queue_position = queue_position + 1 WHERE status = 'queued' AND queue_position >= ?")
@@ -289,6 +295,34 @@ export function createApp({ dataDir }) {
         compactDesk();
       });
       return q.getBook.get(id);
+    }],
+
+    // Moves a queued book to another place in the queue: { to: 1 } puts it first.
+    ["POST", /^\/api\/books\/(\d+)\/queue-move$/, async (req, [id]) => {
+      const book = requireBook(id);
+      if (book.status !== "queued") throw new HttpError(400, "Only books in the queue can be moved there.");
+      const to = toInt((await readJson(req)).to);
+      if (!Number.isInteger(to) || to < 1) throw new HttpError(400, "Send the new place as { to: 1 }.");
+      inTransaction(() => {
+        const ids = db.prepare("SELECT id FROM books WHERE status = 'queued' ORDER BY queue_position, id").all()
+          .map((r) => r.id).filter((other) => other !== id);
+        ids.splice(Math.min(to, ids.length + 1) - 1, 0, id);
+        const set = db.prepare("UPDATE books SET queue_position = ? WHERE id = ?");
+        ids.forEach((bookId, i) => set.run(i + 1, bookId));
+      });
+      return q.getBook.get(id);
+    }],
+
+    // The notes of a book as a Markdown download.
+    ["GET", /^\/api\/books\/(\d+)\/export$/, (req, [id], res) => {
+      const book = requireBook(id);
+      const text = bookToMarkdown(book, q.notesForBook.all(id));
+      res.writeHead(200, {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${exportFileName(book.title)}"`,
+      });
+      res.end(text);
+      return undefined;
     }],
 
     // Deletes a book with everything that belongs to it: reading sessions, notes and its file.

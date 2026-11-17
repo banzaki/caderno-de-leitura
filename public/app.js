@@ -499,7 +499,10 @@ async function renderBook(id) {
             ${book.file_type ? `<span class="badge">${book.file_type.toUpperCase()}</span>` : ""}</div>
           <h1>${esc(book.title)}</h1>
           <div class="author">${esc(book.author) || "Unknown author"}</div>
-          ${book.status === "finished" && book.finished_at ? `<div class="finished-on" style="margin-top:0.3rem">Finished ${longDate(book.finished_at)}</div>` : ""}
+          ${book.status === "finished" && book.finished_at ? `<form id="finished-form" class="finished-on row" style="margin-top:0.3rem;gap:0.5rem">
+            <label for="finished-at" style="margin:0">Finished</label>
+            <input id="finished-at" type="date" value="${book.finished_at}" max="${todayLocal()}" required style="width:auto">
+            <button type="submit" class="ghost">Save date</button></form>` : ""}
           ${bookProgress(book)}
           <div class="numbers">
             <div><strong>${book.current_page}</strong>current page</div>
@@ -516,6 +519,7 @@ async function renderBook(id) {
               finished: '<button class="secondary" data-book-action="reading">Read again</button>',
               queued: '<button class="secondary" data-book-action="reading">Start reading</button>',
             }[book.status]}
+            ${book.notes.length ? `<a class="button secondary" href="/api/books/${book.id}/export" download>Export notes</a>` : ""}
             <span style="flex:1"></span>
             <button class="danger" id="delete-book" type="button">Delete book</button>
           </div>
@@ -607,6 +611,17 @@ async function renderBook(id) {
     });
   }
 
+  document.getElementById("finished-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api("PATCH", `/api/books/${id}`, { finished_at: document.getElementById("finished-at").value });
+      toast("Finish date saved.");
+      route();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
   document.getElementById("delete-book").addEventListener("click", async () => {
     const parts = [];
     if (book.notes.length) parts.push(`${book.notes.length} note${book.notes.length === 1 ? "" : "s"}`);
@@ -691,11 +706,13 @@ async function renderQueue(importResult = null) {
         <input id="queue-search" type="search" placeholder="Find a book in the queue…" aria-label="Find a book in the queue">
       </div>
       <ol class="queue-list" id="queue-list">${queue.map((b) => `
-        <li data-search="${esc(normalizeText(`${b.title} ${b.author}`))}">
+        <li data-search="${esc(normalizeText(`${b.title} ${b.author}`))}" data-id="${b.id}">
+          <span class="grip" title="Hold and drag to reorder" aria-label="Drag to reorder">⠿</span>
           <span class="queue-pos">${b.queue_position}</span>
           <a class="queue-book" href="#/book/${b.id}"><strong>${esc(b.title)}</strong>
             <span class="muted small">${esc(b.author) || "Unknown author"}</span></a>
-          <button class="secondary" data-start="${b.id}">Start reading</button>
+          <span class="queue-actions">${b.queue_position > 1 ? `<button class="ghost" data-top="${b.id}" title="Move to the top of the queue">↑ Top</button>` : ""}
+          <button class="secondary" data-start="${b.id}">Start reading</button></span>
         </li>`).join("")}</ol>
       <p class="empty-state" id="queue-none" hidden>No book in the queue matches.</p>
     </section>` : ""}`;
@@ -712,6 +729,18 @@ async function renderQueue(importResult = null) {
     }
     document.getElementById("queue-none").hidden = shown > 0;
   });
+  view.querySelectorAll("[data-top]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      try {
+        await api("POST", `/api/books/${btn.dataset.top}/queue-move`, { to: 1 });
+        await renderQueue();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }),
+  );
+  wireQueueDrag(document.getElementById("queue-list"));
   view.querySelectorAll("[data-start]").forEach((btn) =>
     btn.addEventListener("click", async () => {
       btn.disabled = true;
@@ -725,6 +754,62 @@ async function renderQueue(importResult = null) {
       }
     }),
   );
+}
+
+// Drag to reorder: hold the grip (mouse or finger) and move up or down; the list scrolls
+// when the pointer nears the screen edge. The new place is saved when you let go.
+function wireQueueDrag(list) {
+  if (!list) return;
+  list.addEventListener("pointerdown", (e) => {
+    const grip = e.target.closest(".grip");
+    const item = grip?.closest("li");
+    if (!item || (e.pointerType === "mouse" && e.button !== 0)) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const from = [...list.children].indexOf(item);
+    item.classList.add("dragging");
+    let lastY = e.clientY;
+    let scroller = null;
+
+    const placeItem = () => {
+      const others = [...list.children].filter((li) => li !== item && !li.hidden);
+      const before = others.find((li) => {
+        const r = li.getBoundingClientRect();
+        return lastY < r.top + r.height / 2;
+      });
+      if (before) list.insertBefore(item, before);
+      else list.append(item);
+    };
+    const onMove = (ev) => {
+      lastY = ev.clientY;
+      placeItem();
+      const edge = 80;
+      clearInterval(scroller);
+      if (lastY < edge || lastY > window.innerHeight - edge) {
+        const speed = lastY < edge ? -14 : 14;
+        scroller = setInterval(() => { window.scrollBy(0, speed); placeItem(); }, 16);
+      }
+    };
+    const finish = async (ev) => {
+      clearInterval(scroller);
+      grip.removeEventListener("pointermove", onMove);
+      grip.removeEventListener("pointerup", finish);
+      grip.removeEventListener("pointercancel", finish);
+      item.classList.remove("dragging");
+      const to = [...list.children].indexOf(item) + 1;
+      if (ev.type === "pointercancel" || to - 1 === from) return;
+      try {
+        await api("POST", `/api/books/${item.dataset.id}/queue-move`, { to });
+        toast(`Moved to place ${to}.`);
+      } catch (err) {
+        toast(err.message, true);
+      }
+      await renderQueue();
+    };
+    grip.addEventListener("pointermove", onMove);
+    grip.addEventListener("pointerup", finish);
+    grip.addEventListener("pointercancel", finish);
+  });
 }
 
 function normalizeText(s) {

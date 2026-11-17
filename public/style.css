@@ -256,7 +256,7 @@ details.edit .fields { margin-top: 0.9rem; }
 
 /* ---------- Queue */
 .queue-list { list-style: none; margin: 0.75rem 0 0; padding: 0; }
-.queue-list li { display: grid; grid-template-columns: 3rem 1fr auto; gap: 0.9rem; align-items: center;
+.queue-list li { display: grid; grid-template-columns: 1.4rem 3rem 1fr auto; gap: 0.9rem; align-items: center;
   padding: 0.7rem 0; border-bottom: 1px solid var(--line); }
 .queue-list li:last-child { border-bottom: none; }
 .queue-pos { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; color: var(--muted); text-align: right;
@@ -312,6 +312,13 @@ code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.9em; back
   .desk-main .cover { font-size: 0.8rem; }
   .desk-main h2 { font-size: 1.4rem; }
   .topbar nav a { padding: 0.35rem 0.6rem; }
-  .queue-list li { grid-template-columns: 2.2rem 1fr; gap: 0.25rem 0.6rem; }
-  .queue-list button { grid-column: 2; justify-self: start; }
+  .queue-list li { grid-template-columns: 1.4rem 2rem 1fr; gap: 0.25rem 0.5rem; }
+  .queue-actions { grid-column: 3; justify-self: start; }
 }
+
+/* Queue: drag handle and the book being dragged. */
+.queue-actions { display: flex; gap: 0.4rem; align-items: center; }
+.grip { cursor: grab; color: var(--muted); font-size: 1.2rem; line-height: 1; text-align: center; padding: 0.4rem 0;
+  touch-action: none; user-select: none; }
+.queue-list li.dragging { background: var(--accent-soft, rgba(0,0,0,0.05)); box-shadow: 0 4px 14px rgba(0,0,0,0.15); border-radius: 8px; position: relative; z-index: 2; }
+.queue-list li.dragging .grip { cursor: grabbing; }
