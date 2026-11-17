@@ -53,6 +53,23 @@ export function noteLocationLabel(note) {
   return "No page";
 }
 
+// The dark/light button: flips the theme, remembers it, and tells the page (event "themechange").
+export function wireThemeToggle(button) {
+  const paint = () => {
+    const dark = document.documentElement.dataset.theme === "dark";
+    button.textContent = dark ? "☀ Light" : "☾ Dark";
+    button.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+  };
+  button.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("theme", next); } catch { /* not saved, still applied */ }
+    paint();
+    window.dispatchEvent(new Event("themechange"));
+  });
+  paint();
+}
+
 // The closing report of a book (an object), or null when it has none yet.
 export function reportOf(book) {
   try {

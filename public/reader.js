@@ -8,7 +8,7 @@
 //   undraw(note)       -> remove a painted highlight
 //   jump(note)         -> go to the place of a note
 import { EPUB_CHARS_PER_PAGE } from "./book-meta.js";
-import { api, esc, noteLocationLabel, toast, todayLocal } from "./common.js";
+import { api, esc, noteLocationLabel, toast, todayLocal, wireThemeToggle } from "./common.js";
 
 const params = new URLSearchParams(location.search);
 const bookId = Number(params.get("book"));
@@ -19,6 +19,8 @@ let book;
 let notes = [];
 let reader;
 let pending = null; // the selection waiting for "Highlight": { quote, where, location, clear }
+const isDark = () => document.documentElement.dataset.theme === "dark";
+wireThemeToggle($("theme-toggle"));
 let startPage = null; // the page the book was opened at
 let nowPage = null; // the page being read now
 
@@ -391,6 +393,23 @@ async function openPdf() {
   }
   watchPages();
 
+  // Dark mode: PDF pages are pictures, so they are inverted (a choice that is remembered).
+  const invertButton = $("invert-toggle");
+  const paintInvert = () => {
+    let on = true;
+    try { on = localStorage.getItem("invert-pdf") !== "off"; } catch { /* default on */ }
+    view.classList.toggle("invert", isDark() && on);
+    invertButton.hidden = !isDark();
+    invertButton.textContent = on ? "Invert pages: on" : "Invert pages: off";
+  };
+  invertButton.addEventListener("click", () => {
+    let on = true;
+    try { on = localStorage.getItem("invert-pdf") !== "off"; localStorage.setItem("invert-pdf", on ? "off" : "on"); } catch { /* ignore */ }
+    paintInvert();
+  });
+  window.addEventListener("themechange", paintInvert);
+  paintInvert();
+
   // The current page is the one at the upper third of the screen.
   function readPosition() {
     const line = stage.getBoundingClientRect().top + stage.clientHeight / 3;
@@ -584,6 +603,13 @@ async function openEpub() {
   });
   await epub.ready;
 
+  // Dark mode: the book text takes the page colors.
+  const paintTheme = () => {
+    rendition.themes.override("color", isDark() ? "#ece6da" : "#26221e");
+    rendition.themes.override("background", isDark() ? "#211e1b" : "#ffffff");
+  };
+  paintTheme();
+
   const printPages = await buildPrintPages(epub);
   const cfiTool = new ePub.CFI();
   // Highlights and counted pages are stored as ranges (start..end). Going to a range
@@ -677,13 +703,22 @@ async function openEpub() {
   const draw = (note) => {
     if (note.loc?.type !== "epub") return;
     try {
-      rendition.annotations.highlight(note.loc.cfi, { id: note.id }, null, "hl", {
-        fill: "#f7e27a", "fill-opacity": "0.55", "mix-blend-mode": "multiply",
-      });
+      rendition.annotations.highlight(note.loc.cfi, { id: note.id }, null, "hl", isDark()
+        ? { fill: "#c9ad2a", "fill-opacity": "0.4", "mix-blend-mode": "screen" }
+        : { fill: "#f7e27a", "fill-opacity": "0.55", "mix-blend-mode": "multiply" });
     } catch (err) {
       console.warn("Could not draw highlight", err);
     }
   };
+
+  window.addEventListener("themechange", () => {
+    paintTheme();
+    for (const note of notes) { // highlights are painted again with the colors of the new theme
+      if (note.loc?.type !== "epub") continue;
+      try { rendition.annotations.remove(note.loc.cfi, "highlight"); } catch { /* not drawn */ }
+      draw(note);
+    }
+  });
 
   await rendition.display(book.last_location || undefined).catch(() => rendition.display());
 

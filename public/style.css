@@ -333,3 +333,46 @@ code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.9em; back
 .report p, .report ol { margin: 0; }
 label.note.pick { display: flex; gap: 0.75rem; align-items: flex-start; cursor: pointer; }
 label.note.pick input { width: auto; margin-top: 0.3rem; flex: none; }
+
+/* ---------- Dark mode: the same tokens with dark values, plus the few fixed colors. */
+.theme-toggle { white-space: nowrap; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #171513; --paper: #211e1b; --ink: #ece6da; --muted: #a39a8c;
+  --line: #342e28; --line-strong: #4a4137;
+  --accent: #3f7d69; --accent-dark: #4f917b; --accent-soft: #24382f;
+  --partial: #3b3321; --danger: #e0786c; --danger-soft: #3b2421; --mark: #c9ad2a;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 20px rgb(0 0 0 / 0.25);
+  --shadow-lift: 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px rgb(0 0 0 / 0.4);
+}
+[data-theme="dark"] a { color: #8fc9b3; }
+[data-theme="dark"] a.button, [data-theme="dark"] .topbar nav a { color: inherit; }
+[data-theme="dark"] a.button:not(.secondary):not(.ghost) { color: #fff; }
+[data-theme="dark"] .topbar nav a.active { color: #8fc9b3; }
+[data-theme="dark"] .topbar { background: rgb(33 30 27 / 0.92); }
+[data-theme="dark"] .topbar nav { background: #2a2622; }
+[data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background: #1a1816; }
+[data-theme="dark"] .dropzone { background: #1d1a17; }
+[data-theme="dark"] .dropzone.has-file { background: #1f2c26; }
+[data-theme="dark"] .stat { background: #2a2622; }
+[data-theme="dark"] .calendar .day { background: #2a2622; }
+[data-theme="dark"] .calendar .day.met small { color: #dce9e3; }
+[data-theme="dark"] .pages-pill, [data-theme="dark"] .badge, [data-theme="dark"] code, [data-theme="dark"] .page-tag { background: #2e2a25; color: var(--ink); }
+[data-theme="dark"] .badge.finished { background: #332d47; color: #c9bde8; }
+[data-theme="dark"] .badge.paused { background: var(--partial); color: #e0c97c; }
+[data-theme="dark"] .badge.main { background: var(--accent); color: #fff; }
+[data-theme="dark"] .badge.owed { background: #4a3517; color: #f0c98a; }
+[data-theme="dark"] .badge.star { background: #6b5a12; color: #fbeaa0; }
+[data-theme="dark"] .finished-on { color: #c9bde8; }
+[data-theme="dark"] .desk-main { background: linear-gradient(135deg, var(--paper), #28231e); }
+[data-theme="dark"] .note blockquote { background: #2d2912; border-left-color: #b89a22; }
+[data-theme="dark"] .note.openable:hover { background: #2a2622; }
+[data-theme="dark"] .stage { background: #12100f; }
+[data-theme="dark"] .panel .note:hover blockquote { background: #3a3414; }
+[data-theme="dark"] .notice { color: #e6d08a; }
+[data-theme="dark"] #epub-view { background: #211e1b; }
+[data-theme="dark"] .pdf-view.invert .pdf-page canvas { filter: invert(0.92) hue-rotate(180deg); }
+[data-theme="dark"] .pdf-view.invert .pdf-page .hl { mix-blend-mode: screen; opacity: 0.35; }
+[data-theme="dark"] .pdf-view .pdf-page { background: #2a2622; }
+[data-theme="dark"] button.secondary, [data-theme="dark"] .button.secondary { color: #8fc9b3; }
+[data-theme="dark"] button.danger { color: var(--danger); }

@@ -56,6 +56,13 @@ finish the book. "Read again" puts a finished book back on the desk. Today opens
 "Back to queue", to the same place it had there. On a finished book the finish day can be
 corrected, and "Export notes" downloads its notes as a Markdown file.
 
+## Dark mode
+
+The button at the top right (and in the reader) switches between light and dark. With no
+choice made, the app follows the computer's setting. In the reader, EPUB text takes the dark
+colors; PDF pages are pictures, so in dark mode they are inverted ("Invert pages" turns that
+off, for books with photos).
+
 ## Closing a book
 
 "Mark as finished" (or reaching the last page) opens the closing page. First you read your

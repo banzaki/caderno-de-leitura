@@ -4,11 +4,12 @@
 //   #/book/12     one book: details, file, sessions, notes
 //   #/queue       the reading queue, in order; import a queue text file
 //   #/notes       every note, with search
-import { STATUS_LABELS, api, esc, formatDate, noteLocationLabel, reportOf, toast, todayLocal } from "./common.js";
+import { STATUS_LABELS, api, esc, formatDate, noteLocationLabel, reportOf, toast, todayLocal, wireThemeToggle } from "./common.js";
 import { fileKind, readBookFileInfo } from "./book-file.js";
 import { fieldsToFill } from "./book-meta.js";
 
 const view = document.getElementById("view");
+wireThemeToggle(document.getElementById("theme-toggle"));
 let calendarMonth = todayLocal().slice(0, 7); // "YYYY-MM"
 
 function setActiveNav(name) {
