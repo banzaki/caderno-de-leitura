@@ -6,9 +6,11 @@ import { DatabaseSync } from "node:sqlite";
 export const BOOK_STATUSES = ["reading", "queued", "paused", "finished"];
 
 // Bump when the schema changes, and add the step to MIGRATIONS.
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
-const BOOKS_TABLE = `
+// The books table as version 1 made it. Migration 0 -> 1 builds exactly this, so the
+// later steps always start from the same table.
+const BOOKS_TABLE_V1 = `
 CREATE TABLE books (
   id INTEGER PRIMARY KEY,
   title TEXT NOT NULL,
@@ -21,6 +23,14 @@ CREATE TABLE books (
   last_location TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`;
+
+// The current books table, for a brand-new database.
+//   desk_position: order on the reading desk (1 = the main book), for reading and paused books.
+//   finished_at:   the day the book was finished (YYYY-MM-DD), for finished books.
+const BOOKS_TABLE = BOOKS_TABLE_V1.replace(
+  "  queue_position INTEGER,\n",
+  "  queue_position INTEGER,\n  desk_position INTEGER,\n  finished_at TEXT,\n",
+);
 
 const SCHEMA = `
 ${BOOKS_TABLE.replace("CREATE TABLE books", "CREATE TABLE IF NOT EXISTS books")};
@@ -59,11 +69,24 @@ const MIGRATIONS = [
   // 0 -> 1: the "queued" status and the queue position. SQLite cannot change a CHECK
   // rule in place, so the books table is rebuilt and every row copied as it was.
   (db) => {
-    db.exec(BOOKS_TABLE.replace("CREATE TABLE books", "CREATE TABLE books_new"));
+    db.exec(BOOKS_TABLE_V1.replace("CREATE TABLE books", "CREATE TABLE books_new"));
     db.exec(`INSERT INTO books_new (id, title, author, total_pages, status, file_name, file_type, last_location, created_at)
       SELECT id, title, author, total_pages, status, file_name, file_type, last_location, created_at FROM books`);
     db.exec("DROP TABLE books");
     db.exec("ALTER TABLE books_new RENAME TO books");
+  },
+
+  // 1 -> 2: the reading desk order and the day a book was finished. Only adds columns.
+  // Books already on the desk keep their order of creation; finished books get the day
+  // of their last logged reading, when there is one.
+  (db) => {
+    db.exec("ALTER TABLE books ADD COLUMN desk_position INTEGER");
+    db.exec("ALTER TABLE books ADD COLUMN finished_at TEXT");
+    const onDesk = db.prepare("SELECT id FROM books WHERE status IN ('reading', 'paused') ORDER BY status = 'paused', id").all();
+    const setDesk = db.prepare("UPDATE books SET desk_position = ? WHERE id = ?");
+    onDesk.forEach(({ id }, i) => setDesk.run(i + 1, id));
+    db.exec(`UPDATE books SET finished_at = (SELECT MAX(date) FROM sessions s WHERE s.book_id = books.id)
+      WHERE status = 'finished'`);
   },
 ];
 

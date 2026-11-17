@@ -47,37 +47,49 @@ function makeOldDatabase(path) {
   old.close();
 }
 
-test("upgrading an old database keeps every row, backs up first, and allows the queue", () => {
+// Opens a database and always closes it, even when a check fails (Windows cannot
+// delete the folder of an open database, which would hide the real failure).
+function withDatabase(path, check) {
+  const db = openDatabase(path);
+  try {
+    check(db);
+  } finally {
+    db.close();
+  }
+}
+
+test("upgrading an old database keeps every row, backs up first, and allows the queue and the desk", () => {
   const dir = mkdtempSync(join(tmpdir(), "caderno-migration-"));
   try {
     const path = join(dir, "caderno.db");
     makeOldDatabase(path);
 
-    const db = openDatabase(path);
-    const books = db.prepare("SELECT id, title, author, total_pages, status, queue_position, file_name, file_type, last_location, created_at FROM books ORDER BY id").all();
-    assert.deepEqual(books.map((b) => ({ ...b })), [
-      { id: 1, title: "How to Read a Book", author: "Mortimer J. Adler", total_pages: 440, status: "reading", queue_position: null, file_name: "how.pdf", file_type: "pdf", last_location: "37", created_at: "2026-11-12 10:00:00" },
-      { id: 2, title: "Meditations", author: "Marcus Aurelius", total_pages: 254, status: "finished", queue_position: null, file_name: null, file_type: null, last_location: null, created_at: "2026-11-10 09:00:00" },
-      { id: 5, title: "The Republic", author: "Plato", total_pages: 416, status: "paused", queue_position: null, file_name: "rep.epub", file_type: "epub", last_location: "epubcfi(/6/4)", created_at: "2026-11-11 08:00:00" },
-    ]);
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sessions").get().n, 2);
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM notes").get().n, 2);
-    assert.equal(db.prepare("SELECT body FROM notes WHERE book_id = 1").get().body, "a note");
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
-    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
-    assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+    withDatabase(path, (db) => {
+      const books = db.prepare(`SELECT id, title, author, total_pages, status, queue_position, desk_position, finished_at,
+        file_name, file_type, last_location, created_at FROM books ORDER BY id`).all();
+      assert.deepEqual(books.map((b) => ({ ...b })), [
+        { id: 1, title: "How to Read a Book", author: "Mortimer J. Adler", total_pages: 440, status: "reading", queue_position: null, desk_position: 1, finished_at: null, file_name: "how.pdf", file_type: "pdf", last_location: "37", created_at: "2026-11-12 10:00:00" },
+        { id: 2, title: "Meditations", author: "Marcus Aurelius", total_pages: 254, status: "finished", queue_position: null, desk_position: null, finished_at: "2026-11-10", file_name: null, file_type: null, last_location: null, created_at: "2026-11-10 09:00:00" },
+        { id: 5, title: "The Republic", author: "Plato", total_pages: 416, status: "paused", queue_position: null, desk_position: 2, finished_at: null, file_name: "rep.epub", file_type: "epub", last_location: "epubcfi(/6/4)", created_at: "2026-11-11 08:00:00" },
+      ]);
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sessions").get().n, 2);
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM notes").get().n, 2);
+      assert.equal(db.prepare("SELECT body FROM notes WHERE book_id = 1").get().body, "a note");
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
+      assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
 
-    // The new status works, and links between tables are still enforced.
-    db.prepare("INSERT INTO books (title, status, queue_position) VALUES ('Queued book', 'queued', 1)").run();
-    assert.throws(() => db.prepare("INSERT INTO notes (book_id, body) VALUES (999, 'orphan')").run(), /FOREIGN KEY/);
-    // New ids continue after the highest old id.
-    assert.equal(db.prepare("SELECT MAX(id) AS id FROM books").get().id, 6);
-    db.close();
+      // The new status works, and links between tables are still enforced.
+      db.prepare("INSERT INTO books (title, status, queue_position) VALUES ('Queued book', 'queued', 1)").run();
+      assert.throws(() => db.prepare("INSERT INTO notes (book_id, body) VALUES (999, 'orphan')").run(), /FOREIGN KEY/);
+      // New ids continue after the highest old id.
+      assert.equal(db.prepare("SELECT MAX(id) AS id FROM books").get().id, 6);
+    });
 
     // A backup of the old file was made, and it still holds the old data.
     const backups = readdirSync(join(dir, "backups"));
     assert.equal(backups.length, 1);
-    assert.match(backups[0], /^caderno-\d{8}-\d{6}-before-migration-1\.db$/);
+    assert.match(backups[0], /^caderno-\d{8}-\d{6}-before-migration-2\.db$/);
     const backup = new DatabaseSync(join(dir, "backups", backups[0]), { readOnly: true });
     assert.equal(backup.prepare("SELECT COUNT(*) AS n FROM books").get().n, 3);
     assert.equal(backup.prepare("PRAGMA user_version").get().user_version, 0);
@@ -91,13 +103,56 @@ test("upgrading an old database keeps every row, backs up first, and allows the 
   }
 });
 
+// Bruno's database on 2026-11-17 was at version 1 (with the queue): it goes to version 2.
+test("upgrading a version 1 database adds the desk order and finish days, and keeps the queue", () => {
+  const dir = mkdtempSync(join(tmpdir(), "caderno-v1-"));
+  try {
+    const path = join(dir, "caderno.db");
+    makeOldDatabase(path);
+    // Make it version 1 the way version 1 of the app left it: the queue columns, no desk.
+    const v1 = new DatabaseSync(path);
+    v1.exec(`
+      CREATE TABLE books_new (
+        id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL DEFAULT '', total_pages INTEGER,
+        status TEXT NOT NULL DEFAULT 'reading' CHECK (status IN ('reading', 'queued', 'paused', 'finished')),
+        queue_position INTEGER, file_name TEXT, file_type TEXT CHECK (file_type IN ('pdf', 'epub')),
+        last_location TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+      INSERT INTO books_new (id, title, author, total_pages, status, file_name, file_type, last_location, created_at)
+        SELECT id, title, author, total_pages, status, file_name, file_type, last_location, created_at FROM books;
+      PRAGMA foreign_keys = OFF;
+      DROP TABLE books;
+      ALTER TABLE books_new RENAME TO books;
+      INSERT INTO books (id, title, status, queue_position) VALUES (6, 'Sidarta', 'queued', 1), (7, 'Second reading', 'reading', NULL);
+      PRAGMA user_version = 1;`);
+    v1.close();
+
+    withDatabase(path, (db) => {
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
+      const rows = db.prepare("SELECT id, status, queue_position, desk_position, finished_at FROM books ORDER BY id").all().map((r) => ({ ...r }));
+      assert.deepEqual(rows, [
+        { id: 1, status: "reading", queue_position: null, desk_position: 1, finished_at: null },
+        { id: 2, status: "finished", queue_position: null, desk_position: null, finished_at: "2026-11-10" },
+        { id: 5, status: "paused", queue_position: null, desk_position: 3, finished_at: null },
+        { id: 6, status: "queued", queue_position: 1, desk_position: null, finished_at: null },
+        { id: 7, status: "reading", queue_position: null, desk_position: 2, finished_at: null },
+      ]);
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sessions").get().n, 2);
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM notes").get().n, 2);
+      assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+    });
+    assert.equal(readdirSync(join(dir, "backups")).length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a brand-new database starts at the current version without a backup", () => {
   const dir = mkdtempSync(join(tmpdir(), "caderno-new-"));
   try {
-    const db = openDatabase(join(dir, "caderno.db"));
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
-    db.prepare("INSERT INTO books (title, status, queue_position) VALUES ('x', 'queued', 1)").run();
-    db.close();
+    withDatabase(join(dir, "caderno.db"), (db) => {
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
+      db.prepare("INSERT INTO books (title, status, desk_position) VALUES ('x', 'reading', 1)").run();
+    });
     assert.equal(existsSync(join(dir, "backups")), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });

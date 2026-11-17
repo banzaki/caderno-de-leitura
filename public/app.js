@@ -139,6 +139,7 @@ async function renderToday() {
           date: form.elements.date.value,
         });
         toast(`Saved: ${s.pages} pages.`);
+        await offerToFinish(reading.find((b) => b.id === s.book_id), s.to_page);
         route();
       } catch (err) {
         toast(err.message, true);
@@ -225,17 +226,98 @@ function coverHtml(book) {
 
 const FILE_ICON = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 12v6M9 15l3-3 3 3"/></svg>`;
 
+// "17 Nov 2026"
+function longDate(date) {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Moves a book to the library, finished today.
+async function markFinished(book) {
+  await api("PATCH", `/api/books/${book.id}`, { status: "finished", finished_on: todayLocal() });
+  toast(`"${book.title}" is now in your library.`);
+}
+
+// After logging pages: when the last page was reached, offer to finish the book.
+async function offerToFinish(book, toPage) {
+  if (!book || !book.total_pages || toPage < book.total_pages || book.status === "finished") return;
+  if (!confirm(`You reached the last page of "${book.title}".\n\nMark it as finished and move it to your library?`)) return;
+  await markFinished(book);
+}
+
+// One book on a shelf: the cover and details are a link; buttons may follow below it.
+function bookTile(b, { caption = "", controls = "" } = {}) {
+  return `<div class="book-tile">
+    <a class="book-card" href="#/book/${b.id}">
+      ${coverHtml(b)}
+      <div><h3>${esc(b.title)}</h3><div class="muted small">${esc(b.author) || "Unknown author"}</div></div>
+      ${caption || bookProgress(b)}
+      <div class="tags">
+        ${b.file_type ? `<span class="badge">${b.file_type.toUpperCase()}</span>` : ""}
+        ${b.note_count ? `<span class="badge">${b.note_count} note${b.note_count === 1 ? "" : "s"}</span>` : ""}</div>
+    </a>${controls}</div>`;
+}
+
+// The reading desk: the main book large, then the other books being read (which can
+// be moved or made main), then the paused ones.
+function deskHtml(reading, paused) {
+  if (!reading.length && !paused.length) {
+    return `<div class="card empty-state">Nothing on your desk. Start a book from the <a href="#/queue">Queue</a> or add one below.</div>`;
+  }
+  const [main, ...others] = reading;
+  const mainHtml = main ? `
+    <section class="card desk-main">
+      <a href="#/book/${main.id}" class="desk-cover">${coverHtml(main)}</a>
+      <div style="min-width:0">
+        <div class="eyebrow">Main book</div>
+        <h2><a href="#/book/${main.id}">${esc(main.title)}</a></h2>
+        <div class="author">${esc(main.author) || "Unknown author"}</div>
+        ${bookProgress(main)}
+        <div class="actions">
+          ${main.file_type ? `<a class="button big" href="/reader.html?book=${main.id}">Continue reading</a>` : ""}
+          <a class="button secondary" href="#/book/${main.id}">Log pages</a>
+          <button class="secondary" data-finish="${main.id}">Mark as finished</button>
+        </div>
+      </div>
+    </section>` : "";
+  const othersHtml = others.length ? `
+    <h3 class="shelf-title">Also reading</h3>
+    <div class="books">${others.map((b, i) => bookTile(b, { controls: `
+      <div class="tile-actions">
+        <button class="ghost" data-move="${b.id}" data-to="1">Make main</button>
+        <span style="flex:1"></span>
+        ${i > 0 ? `<button class="ghost" data-move="${b.id}" data-to="${i + 1}" aria-label="Move left" title="Move left">‹</button>` : ""}
+        ${i < others.length - 1 ? `<button class="ghost" data-move="${b.id}" data-to="${i + 3}" aria-label="Move right" title="Move right">›</button>` : ""}
+      </div>` })).join("")}</div>` : "";
+  const pausedHtml = paused.length ? `
+    <h3 class="shelf-title">Paused</h3>
+    <div class="books">${paused.map((b) => bookTile(b)).join("")}</div>` : "";
+  return mainHtml + othersHtml + pausedHtml;
+}
+
 async function renderBooks() {
   const all = await api("GET", "/api/books");
-  const books = all.filter((b) => b.status !== "queued"); // queued books live on the Queue page
-  const queued = all.length - books.length;
+  const nowReading = all.filter((b) => b.status === "reading"); // already in desk order
+  const paused = all.filter((b) => b.status === "paused");
+  const finished = all.filter((b) => b.status === "finished"); // most recently finished first
+  const queued = all.filter((b) => b.status === "queued").length; // they live on the Queue page
   view.innerHTML = `
     <div class="page-head">
-      <div><div class="eyebrow">Your shelf</div><h1>Books</h1></div>
-      <span class="muted">${books.length} book${books.length === 1 ? "" : "s"}${queued ? ` · <a href="#/queue">${queued} in your queue</a>` : ""}</span>
+      <div><div class="eyebrow">Your books</div><h1>Reading desk</h1></div>
+      <span class="muted">${nowReading.length + paused.length} on the desk · ${finished.length} in the library${queued ? ` · <a href="#/queue">${queued} in your queue</a>` : ""}</span>
     </div>
-    <section class="card">
-      <h2>Add a book</h2>
+    ${deskHtml(nowReading, paused)}
+
+    <div class="page-head section" style="margin-top:2.25rem">
+      <div><div class="eyebrow">Finished books</div><h2 style="font-size:1.6rem;margin:0">Library</h2></div>
+    </div>
+    ${finished.length ? `<div class="books">${finished.map((b) => bookTile(b, {
+      caption: `<div class="finished-on">${b.finished_at ? `Finished ${longDate(b.finished_at)}` : "Finished"}</div>`,
+    })).join("")}</div>`
+      : `<div class="card empty-state">Finished books will stand here.</div>`}
+
+    <details class="card add-book section" ${all.length ? "" : "open"}>
+      <summary><span class="plus" aria-hidden="true">+</span> Add a book</summary>
       <form id="book-form" class="fields">
         <div class="wide"><label class="dropzone" id="b-drop" for="b-file">
           <span class="icon">${FILE_ICON}</span>
@@ -250,19 +332,31 @@ async function renderBooks() {
           ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
         <div><button type="submit">Add book</button></div>
       </form>
-    </section>
-    <section class="section">
-      ${books.length ? `<div class="books">${books.map((b) => `
-        <a class="book-card" href="#/book/${b.id}">
-          ${coverHtml(b)}
-          <div><h3>${esc(b.title)}</h3><div class="muted small">${esc(b.author) || "Unknown author"}</div></div>
-          ${bookProgress(b)}
-          <div class="tags"><span class="badge ${b.status}">${STATUS_LABELS[b.status]}</span>
-            ${b.file_type ? `<span class="badge">${b.file_type.toUpperCase()}</span>` : ""}
-            ${b.note_count ? `<span class="badge">${b.note_count} note${b.note_count === 1 ? "" : "s"}</span>` : ""}</div>
-        </a>`).join("")}</div>`
-      : `<div class="card empty-state">No books yet. Add the one you are reading above.</div>`}
-    </section>`;
+    </details>`;
+
+  view.querySelectorAll("[data-move]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      try {
+        await api("POST", `/api/books/${btn.dataset.move}/move`, { to: Number(btn.dataset.to) });
+        if (btn.dataset.to === "1") toast("New main book.");
+        route();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }),
+  );
+  view.querySelectorAll("[data-finish]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const book = all.find((b) => b.id === Number(btn.dataset.finish));
+      if (!confirm(`Mark "${book.title}" as finished and move it to your library?`)) return;
+      try {
+        await markFinished(book);
+        route();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }),
+  );
 
   const form = document.getElementById("book-form");
   const fileInput = form.elements.file;
@@ -351,6 +445,8 @@ async function uploadBookFile(id, file) {
 async function renderBook(id) {
   const book = await api("GET", `/api/books/${id}`);
   const total = book.sessions.reduce((sum, s) => sum + s.pages, 0);
+  const onDesk = book.status === "reading" || book.status === "paused";
+  setActiveNav(book.status === "queued" ? "queue" : "books");
 
   view.innerHTML = `
     <a class="back-link" href="#/books">← All books</a>
@@ -359,9 +455,11 @@ async function renderBook(id) {
         ${coverHtml(book)}
         <div style="min-width:0">
           <div class="row" style="gap:0.4rem;margin-bottom:0.5rem"><span class="badge ${book.status}">${STATUS_LABELS[book.status]}</span>
+            ${book.status === "reading" && book.desk_position === 1 ? '<span class="badge main">Main book</span>' : ""}
             ${book.file_type ? `<span class="badge">${book.file_type.toUpperCase()}</span>` : ""}</div>
           <h1>${esc(book.title)}</h1>
           <div class="author">${esc(book.author) || "Unknown author"}</div>
+          ${book.status === "finished" && book.finished_at ? `<div class="finished-on" style="margin-top:0.3rem">Finished ${longDate(book.finished_at)}</div>` : ""}
           ${bookProgress(book)}
           <div class="numbers">
             <div><strong>${book.current_page}</strong>current page</div>
@@ -372,6 +470,12 @@ async function renderBook(id) {
             ${book.file_type ? `<a class="button big" href="/reader.html?book=${book.id}">Open reader</a>` : ""}
             <label class="button secondary" for="file-input" style="margin:0">${book.file_type ? "Replace file" : "Attach PDF or EPUB"}</label>
             <input id="file-input" class="visually-hidden" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip">
+            ${{
+              reading: '<button class="secondary" data-book-action="finish">Mark as finished</button>',
+              paused: '<button class="secondary" data-book-action="reading">Resume reading</button><button class="secondary" data-book-action="finish">Mark as finished</button>',
+              finished: '<button class="secondary" data-book-action="reading">Read again</button>',
+              queued: '<button class="secondary" data-book-action="reading">Start reading</button>',
+            }[book.status]}
             <span style="flex:1"></span>
             <button class="danger" id="delete-book" type="button">Delete book</button>
           </div>
@@ -395,6 +499,20 @@ async function renderBook(id) {
 
     <div class="grid two section">
       <section class="card">
+        ${onDesk ? `
+        <h2>Log reading</h2>
+        <form id="book-log-form" class="fields">
+          <div><label for="bl-from">From page</label><input id="bl-from" name="from_page" type="number" min="1" required value="${book.current_page + 1}"></div>
+          <div><label for="bl-to">To page</label><input id="bl-to" name="to_page" type="number" min="1" ${book.total_pages ? `max="${book.total_pages}"` : ""} required></div>
+          <div><label for="bl-date">Date</label><input id="bl-date" name="date" type="date" value="${todayLocal()}" max="${todayLocal()}" required></div>
+          <div class="wide row spread"><span class="computed" id="bl-computed"></span><button type="submit">Save</button></div>
+        </form>
+        <h2 style="margin-top:1.5rem">Reading history</h2>` : "<h2>Reading history</h2>"}
+        ${book.sessions.length ? `<ul class="list">${book.sessions.map((s) => `
+          <li><div class="grow">${formatDate(s.date)}<div class="muted small">pages ${s.from_page}–${s.to_page}</div></div><span class="pages-pill">${s.pages} p.</span></li>`).join("")}</ul>`
+        : '<p class="empty-state">No reading logged for this book yet.</p>'}
+      </section>
+      <section class="card">
         <h2>Notes</h2>
         <form id="note-form" class="fields">
           <div><label for="n-page">Page</label><input id="n-page" name="page" type="number" min="1" value="${book.current_page || ""}"></div>
@@ -403,13 +521,50 @@ async function renderBook(id) {
         </form>
         <div id="book-notes" style="margin-top:1rem">${renderNoteList(book.notes.map((n) => ({ ...n, file_type: book.file_type })), false)}</div>
       </section>
-      <section class="card">
-        <h2>Reading history</h2>
-        ${book.sessions.length ? `<ul class="list">${book.sessions.map((s) => `
-          <li><div class="grow">${formatDate(s.date)}<div class="muted small">pages ${s.from_page}–${s.to_page}</div></div><span class="pages-pill">${s.pages} p.</span></li>`).join("")}</ul>`
-        : '<p class="empty-state">No reading logged for this book yet.</p>'}
-      </section>
     </div>`;
+
+  view.querySelectorAll("[data-book-action]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      try {
+        if (btn.dataset.bookAction === "finish") {
+          if (!confirm(`Mark "${book.title}" as finished and move it to your library?`)) return;
+          await markFinished(book);
+        } else {
+          await api("PATCH", `/api/books/${id}`, { status: btn.dataset.bookAction });
+          toast(book.status === "finished" ? "Back on your reading desk." : "On your reading desk.");
+        }
+        route();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }),
+  );
+
+  const logForm = document.getElementById("book-log-form");
+  if (logForm) {
+    const f = logForm.elements;
+    const computed = document.getElementById("bl-computed");
+    const update = () => {
+      const from = Number(f.from_page.value);
+      const to = Number(f.to_page.value);
+      computed.textContent = from && to && to >= from ? `${to - from + 1} pages` : "";
+    };
+    f.from_page.addEventListener("input", update);
+    f.to_page.addEventListener("input", update);
+    logForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const s = await api("POST", "/api/sessions", {
+          book_id: id, from_page: Number(f.from_page.value), to_page: Number(f.to_page.value), date: f.date.value,
+        });
+        toast(`Saved: ${s.pages} pages.`);
+        await offerToFinish(book, s.to_page);
+        route();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  }
 
   document.getElementById("delete-book").addEventListener("click", async () => {
     const parts = [];

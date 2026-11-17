@@ -77,6 +77,14 @@ function toInt(value) {
   return Number.isInteger(n) ? n : Number.NaN;
 }
 
+// The day a book was finished: the one sent by the browser (its local date), or today here.
+function finishedDay(value) {
+  if (isValidDate(value)) return value;
+  const d = new Date();
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
 function cleanText(value, max = 20000) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
@@ -117,7 +125,7 @@ export function createApp({ dataDir }) {
         (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
       FROM books b
       ORDER BY CASE b.status WHEN 'reading' THEN 0 WHEN 'paused' THEN 1 WHEN 'finished' THEN 2 ELSE 3 END,
-        b.queue_position, b.title COLLATE NOCASE`),
+        b.desk_position, b.finished_at DESC, b.queue_position, b.title COLLATE NOCASE`),
     queue: db.prepare(`
       SELECT b.*, (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
       FROM books b WHERE b.status = 'queued' ORDER BY b.queue_position, b.id`),
@@ -126,10 +134,11 @@ export function createApp({ dataDir }) {
         COALESCE((SELECT MAX(to_page) FROM sessions s WHERE s.book_id = b.id), 0) AS current_page,
         (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
       FROM books b WHERE b.id = ?`),
-    insertBook: db.prepare(
-      "INSERT INTO books (title, author, total_pages, status, queue_position) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    ),
+    insertBook: db.prepare(`
+      INSERT INTO books (title, author, total_pages, status, queue_position, desk_position, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`),
     lastQueuePosition: db.prepare("SELECT COALESCE(MAX(queue_position), 0) AS n FROM books WHERE status = 'queued'"),
+    lastDeskPosition: db.prepare("SELECT COALESCE(MAX(desk_position), 0) AS n FROM books WHERE status IN ('reading', 'paused')"),
     sessionsForBook: db.prepare("SELECT * FROM sessions WHERE book_id = ? ORDER BY date DESC, id DESC"),
     recentSessions: db.prepare(`
       SELECT s.*, b.title FROM sessions s JOIN books b ON b.id = s.book_id
@@ -168,6 +177,28 @@ export function createApp({ dataDir }) {
     db.prepare("UPDATE books SET queue_position = NULL WHERE status <> 'queued'").run();
   }
 
+  // The reading desk holds reading and paused books: 1 is the main book, then the other
+  // books being read, then the paused ones. Positions stay 1, 2, 3... with no gaps.
+  function compactDesk() {
+    const ids = db.prepare(`SELECT id FROM books WHERE status IN ('reading', 'paused')
+      ORDER BY status = 'paused', desk_position IS NULL, desk_position, id`).all();
+    const set = db.prepare("UPDATE books SET desk_position = ? WHERE id = ?");
+    ids.forEach(({ id }, i) => set.run(i + 1, id));
+    db.prepare("UPDATE books SET desk_position = NULL WHERE status NOT IN ('reading', 'paused')").run();
+  }
+
+  // Where a book goes when its status is set: the end of the queue, the end of the desk,
+  // or the library with the day it was finished. Unchanged status keeps its place.
+  function placeFor(status, current, finishedOn) {
+    const same = status === current.status;
+    const onDesk = (s) => s === "reading" || s === "paused";
+    return {
+      queuePosition: status !== "queued" ? null : same ? current.queue_position : q.lastQueuePosition.get().n + 1,
+      deskPosition: !onDesk(status) ? null : onDesk(current.status) ? current.desk_position : q.lastDeskPosition.get().n + 1,
+      finishedAt: status !== "finished" ? null : same && current.finished_at ? current.finished_at : finishedOn,
+    };
+  }
+
   // Runs fn inside one transaction: all of it is saved, or none of it.
   function inTransaction(fn) {
     db.exec("BEGIN");
@@ -198,9 +229,10 @@ export function createApp({ dataDir }) {
     ["GET", /^\/api\/books$/, () => q.listBooks.all()],
 
     ["POST", /^\/api\/books$/, async (req) => {
-      const f = parseBookFields(await readJson(req));
-      const position = f.status === "queued" ? q.lastQueuePosition.get().n + 1 : null;
-      const { id } = q.insertBook.get(f.title, f.author, f.totalPages, f.status, position);
+      const body = await readJson(req);
+      const f = parseBookFields(body);
+      const place = placeFor(f.status, {}, finishedDay(body.finished_on));
+      const { id } = q.insertBook.get(f.title, f.author, f.totalPages, f.status, place.queuePosition, place.deskPosition, place.finishedAt);
       return [201, q.getBook.get(id)];
     }],
 
@@ -216,14 +248,33 @@ export function createApp({ dataDir }) {
       const lastLocation = body.last_location !== undefined
         ? cleanText(String(body.last_location), 2000)
         : current.last_location;
-      // Joining the queue puts the book at the end; leaving it closes the gap.
-      const position = f.status !== "queued" ? null
-        : current.status === "queued" ? current.queue_position
-          : q.lastQueuePosition.get().n + 1;
+      // Joining the queue or the desk puts the book at the end; leaving closes the gap.
+      const place = placeFor(f.status, current, finishedDay(body.finished_on));
       inTransaction(() => {
-        db.prepare("UPDATE books SET title = ?, author = ?, total_pages = ?, status = ?, queue_position = ?, last_location = ? WHERE id = ?")
-          .run(f.title, f.author, f.totalPages, f.status, position, lastLocation, id);
-        if (f.status !== current.status) compactQueue();
+        db.prepare(`UPDATE books SET title = ?, author = ?, total_pages = ?, status = ?, queue_position = ?,
+          desk_position = ?, finished_at = ?, last_location = ? WHERE id = ?`)
+          .run(f.title, f.author, f.totalPages, f.status, place.queuePosition, place.deskPosition, place.finishedAt, lastLocation, id);
+        if (f.status !== current.status) {
+          compactQueue();
+          compactDesk();
+        }
+      });
+      return q.getBook.get(id);
+    }],
+
+    // Moves a book being read to another place on the desk: { to: 1 } makes it the main book.
+    ["POST", /^\/api\/books\/(\d+)\/move$/, async (req, [id]) => {
+      const book = requireBook(id);
+      if (book.status !== "reading") throw new HttpError(400, "Only books being read can be moved on the desk.");
+      const to = toInt((await readJson(req)).to);
+      if (!Number.isInteger(to) || to < 1) throw new HttpError(400, "Send the new place as { to: 1 }.");
+      inTransaction(() => {
+        const ids = db.prepare("SELECT id FROM books WHERE status = 'reading' ORDER BY desk_position, id").all()
+          .map((r) => r.id).filter((other) => other !== id);
+        ids.splice(Math.min(to, ids.length + 1) - 1, 0, id);
+        const set = db.prepare("UPDATE books SET desk_position = ? WHERE id = ?");
+        ids.forEach((bookId, i) => set.run(i + 1, bookId));
+        compactDesk();
       });
       return q.getBook.get(id);
     }],
@@ -236,6 +287,7 @@ export function createApp({ dataDir }) {
         db.prepare("DELETE FROM sessions WHERE book_id = ?").run(id);
         db.prepare("DELETE FROM books WHERE id = ?").run(id);
         compactQueue();
+        compactDesk();
       });
       for (const ext of [".pdf", ".epub"]) {
         const filePath = join(booksDir, `${id}${ext}`);
@@ -268,7 +320,7 @@ export function createApp({ dataDir }) {
             continue;
           }
           position += 1;
-          const { id } = q.insertBook.get(entry.title, entry.author, null, "queued", position);
+          const { id } = q.insertBook.get(entry.title, entry.author, null, "queued", position, null, null);
           const book = { id, title: entry.title, author: entry.author, status: "queued" };
           known.push(book);
           added.push(book);

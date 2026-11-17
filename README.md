@@ -38,6 +38,14 @@ When a new version of the app needs to upgrade the database, it first saves a co
 Deleting a book (button on the book page) also deletes its notes, its reading entries and
 its file. It cannot be undone, so the app asks first.
 
+## Reading desk and library
+
+The Books page is your reading desk: the main book on top (the default for "Log reading" and
+"Continue reading"), the other books you are reading ("Make main" or the arrows change the
+order), and the paused ones. Finished books move to the library below, with the day you
+finished. Log pages on Today or on the book's own page; reaching the last page offers to
+finish the book. "Read again" puts a finished book back on the desk.
+
 ## Reading queue
 
 The Queue page lists the books you plan to read, in order. "Start reading" moves a book to

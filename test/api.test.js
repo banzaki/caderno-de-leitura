@@ -175,6 +175,63 @@ test("queue: import without duplicates, keep order, start reading closes the gap
   assert.equal((await api("POST", "/api/queue/import", { text: "nothing here" })).status, 400);
 });
 
+test("reading desk: main book, moving, pausing, finishing to the library, reading again", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "caderno-desk-"));
+  const desk = createApp({ dataDir: dir });
+  await new Promise((r) => desk.server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${desk.server.address().port}`;
+  const call = async (method, path, body) => {
+    const res = await fetch(url + path, { method, headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+    return { status: res.status, data: await res.json() };
+  };
+  const order = async () => (await call("GET", "/api/books")).data
+    .filter((b) => b.desk_position !== null).map((b) => `${b.desk_position}:${b.title}:${b.status}`);
+  try {
+    const a = (await call("POST", "/api/books", { title: "A" })).data;
+    const b = (await call("POST", "/api/books", { title: "B" })).data;
+    const c = (await call("POST", "/api/books", { title: "C", total_pages: 30 })).data;
+    assert.deepEqual(await order(), ["1:A:reading", "2:B:reading", "3:C:reading"]);
+
+    // "Make main" puts C first; the others keep their order.
+    assert.equal((await call("POST", `/api/books/${c.id}/move`, { to: 1 })).data.desk_position, 1);
+    assert.deepEqual(await order(), ["1:C:reading", "2:A:reading", "3:B:reading"]);
+    await call("POST", `/api/books/${b.id}/move`, { to: 2 });
+    assert.deepEqual(await order(), ["1:C:reading", "2:B:reading", "3:A:reading"]);
+
+    // Pausing keeps the book on the desk, after the books being read.
+    await call("PATCH", `/api/books/${b.id}`, { status: "paused" });
+    assert.deepEqual(await order(), ["1:C:reading", "2:A:reading", "3:B:paused"]);
+    assert.equal((await call("POST", `/api/books/${b.id}/move`, { to: 1 })).status, 400); // only books being read move
+
+    // Logging the last page, then finishing: the book leaves the desk for the library.
+    assert.equal((await call("POST", "/api/sessions", { book_id: c.id, date: "2026-11-17", from_page: 1, to_page: 30 })).status, 201);
+    const done = (await call("PATCH", `/api/books/${c.id}`, { status: "finished", finished_on: "2026-11-17" })).data;
+    assert.equal(done.finished_at, "2026-11-17");
+    assert.equal(done.desk_position, null);
+    assert.deepEqual(await order(), ["1:A:reading", "2:B:paused"]);
+    // Saving other details keeps the finish day.
+    assert.equal((await call("PATCH", `/api/books/${c.id}`, { author: "Someone" })).data.finished_at, "2026-11-17");
+
+    // Reading it again brings it back to the end of the books being read, and forgets the day.
+    const again = (await call("PATCH", `/api/books/${c.id}`, { status: "reading" })).data;
+    assert.equal(again.finished_at, null);
+    assert.deepEqual(await order(), ["1:A:reading", "2:C:reading", "3:B:paused"]);
+
+    // A book added as finished goes straight to the library with today's date.
+    const old = (await call("POST", "/api/books", { title: "Old", status: "finished" })).data;
+    assert.match(old.finished_at, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(old.desk_position, null);
+
+    // Deleting a desk book closes the gap.
+    await call("DELETE", `/api/books/${a.id}`);
+    assert.deepEqual(await order(), ["1:C:reading", "2:B:paused"]);
+  } finally {
+    desk.server.close();
+    desk.db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Bruno's real queue file, when it is on this computer (read only, imported into the temporary test database).
 const REAL_QUEUE = "C:/Users/qbbru/Documents/Leitura/fila-de-leitura.txt";
 test("the real queue file imports all 307 books, in order, only once", { skip: !existsSync(REAL_QUEUE) && "real queue file not on this computer" }, async () => {
