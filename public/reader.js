@@ -47,6 +47,7 @@ async function start() {
   }
   for (const note of notes) reader.draw(note);
   renderPanel();
+  updateQuickNoteLabel();
   wireSelectionBar();
   wireQuickNote();
   const startNote = startNoteId && notes.find((n) => n.id === startNoteId);
@@ -229,71 +230,165 @@ async function openPdf() {
     iccUrl: "/vendor/pdfjs-iccs/",
   }).promise;
 
+  // All pages sit one under the other and the reader scrolls down through them.
+  // Only the pages near the screen are drawn; the others are empty boxes of the
+  // right size, so a 400-page book stays light.
+  const stage = $("stage");
   const view = $("pdf-view");
   view.hidden = false;
-  let pageNum = Math.min(Math.max(Number(book.last_location) || 1, 1), doc.numPages);
+  view.classList.add("continuous");
+  const total = doc.numPages;
   let zoom = 1;
-  let renderId = 0;
-  let pageEl = null;
+  let scale = 1;
+  let currentPage = 1;
+  const pages = []; // pages[n - 1] = { el, n, state: "empty" | "drawing" | "drawn", hasText, task }
 
-  // Navigation controls: page box and zoom.
-  $("position").innerHTML = `Page <input id="page-input" type="number" min="1" max="${doc.numPages}" aria-label="Page number"> of ${doc.numPages}`;
+  $("position").innerHTML = `Page <input id="page-input" type="number" min="1" max="${total}" aria-label="Page number"> of ${total}`;
   $("extra-controls").innerHTML = `
     <button class="secondary" id="zoom-out" aria-label="Zoom out">−</button>
     <button class="secondary" id="zoom-in" aria-label="Zoom in">+</button>`;
   const pageInput = $("page-input");
 
-  async function render(n) {
-    pageNum = Math.min(Math.max(n, 1), doc.numPages);
-    pageInput.value = pageNum;
-    const myRender = ++renderId;
-    const page = await doc.getPage(pageNum);
-    const base = page.getViewport({ scale: 1 });
-    const fit = Math.min((view.parentElement.clientWidth - 48) / base.width, 1.6);
-    const viewport = page.getViewport({ scale: fit * zoom });
-    const dpr = window.devicePixelRatio || 1;
+  // Page boxes sized from the first page; each box takes its own size once drawn.
+  const first = (await doc.getPage(1)).getViewport({ scale: 1 });
+  const fitScale = () => Math.min((stage.clientWidth - 48) / first.width, 1.6) * zoom;
 
+  function layout() {
+    scale = fitScale();
+    for (const p of pages) {
+      const w = (p.width ?? first.width) * scale;
+      const h = (p.height ?? first.height) * scale;
+      p.el.style.width = `${w}px`;
+      p.el.style.height = `${h}px`;
+    }
+  }
+
+  for (let n = 1; n <= total; n++) {
     const el = document.createElement("div");
     el.className = "pdf-page";
-    el.style.width = `${viewport.width}px`;
-    el.style.height = `${viewport.height}px`;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(viewport.width * dpr);
-    canvas.height = Math.floor(viewport.height * dpr);
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    const hlLayer = document.createElement("div");
-    hlLayer.className = "hl-layer";
-    const textLayer = document.createElement("div");
-    textLayer.className = "textLayer";
-    textLayer.style.setProperty("--scale-factor", viewport.scale);
-    textLayer.style.setProperty("--total-scale-factor", viewport.scale);
-    el.append(canvas, hlLayer, textLayer);
+    el.dataset.page = n;
+    pages.push({ el, n, state: "empty" });
+    view.append(el);
+  }
+  layout();
 
-    await page.render({
-      canvas,
-      canvasContext: canvas.getContext("2d"),
-      viewport,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-    }).promise;
-    if (myRender !== renderId) return; // the user already moved to another page
-    await new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: textLayer, viewport }).render();
-    if (myRender !== renderId) return;
-    if (textLayer.textContent.trim()) hideNotice();
+  async function drawPage(p) {
+    if (p.state !== "empty") return;
+    p.state = "drawing";
+    const myScale = scale;
+    try {
+      const page = await doc.getPage(p.n);
+      const base = page.getViewport({ scale: 1 });
+      p.width = base.width;
+      p.height = base.height;
+      const viewport = page.getViewport({ scale: myScale });
+      const dpr = window.devicePixelRatio || 1;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      const hlLayer = document.createElement("div");
+      hlLayer.className = "hl-layer";
+      const textLayer = document.createElement("div");
+      textLayer.className = "textLayer";
+      textLayer.style.setProperty("--scale-factor", viewport.scale);
+      textLayer.style.setProperty("--total-scale-factor", viewport.scale);
+
+      p.task = page.render({
+        canvas,
+        canvasContext: canvas.getContext("2d"),
+        viewport,
+        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+      });
+      await p.task.promise;
+      await new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: textLayer, viewport }).render();
+      if (p.state !== "drawing" || myScale !== scale) return; // freed or zoomed meanwhile
+      p.el.style.width = `${viewport.width}px`;
+      p.el.style.height = `${viewport.height}px`;
+      p.el.replaceChildren(canvas, hlLayer, textLayer);
+      p.hasText = Boolean(textLayer.textContent.trim());
+      p.state = "drawn";
+      for (const note of notes) draw(note);
+      if (p.n === currentPage) updateScanNotice();
+    } catch (err) {
+      if (err?.name !== "RenderingCancelledException") console.warn(`Could not draw page ${p.n}`, err);
+      if (p.state === "drawing") p.state = "empty";
+    }
+  }
+
+  // Frees a page far from the screen (its canvas can take many megabytes).
+  function freePage(p) {
+    if (p.state === "empty") return;
+    p.task?.cancel();
+    p.el.replaceChildren();
+    p.state = "empty";
+  }
+
+  // Draw pages within about one screen of the visible area; free pages much farther away.
+  const near = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) drawPage(pages[Number(e.target.dataset.page) - 1]);
+  }, { root: stage, rootMargin: "100% 0px" });
+  const far = new IntersectionObserver((entries) => {
+    for (const e of entries) if (!e.isIntersecting) freePage(pages[Number(e.target.dataset.page) - 1]);
+  }, { root: stage, rootMargin: "400% 0px" });
+  // (Re)starting the observers makes them look at every page again, which draws the
+  // pages on screen even when they were already there (after a zoom, for example).
+  function watchPages() {
+    near.disconnect();
+    far.disconnect();
+    for (const p of pages) { near.observe(p.el); far.observe(p.el); }
+  }
+  watchPages();
+
+  // The current page is the one at the upper third of the screen.
+  function readPosition() {
+    const line = stage.getBoundingClientRect().top + stage.clientHeight / 3;
+    let found = pages[0];
+    for (const p of pages) {
+      const r = p.el.getBoundingClientRect();
+      if (r.top <= line) found = p; else break;
+    }
+    const r = found.el.getBoundingClientRect();
+    const fraction = Math.min(Math.max((stage.getBoundingClientRect().top - r.top) / r.height, 0), 0.999);
+    return { page: found.n, fraction };
+  }
+
+  function updateScanNotice() {
+    const p = pages[currentPage - 1];
+    if (p.state !== "drawn") return;
+    if (p.hasText) hideNotice();
     else showNotice("This page is a scanned image, so its text cannot be selected or highlighted. You can still add a note for this page.");
+  }
 
-    view.replaceChildren(el);
-    pageEl = el;
-    for (const note of notes) draw(note);
-    view.parentElement.scrollTop = 0;
-    rememberLocation(pageNum);
-    updateQuickNoteLabel();
+  // Saved as "page.fraction", for example "12.35": a third of the way into page 12.
+  // Older saves are just the page number, which still works.
+  function onScroll() {
+    const { page, fraction } = readPosition();
+    if (document.activeElement !== pageInput) pageInput.value = page;
+    rememberLocation((page + fraction).toFixed(3));
+    if (page !== currentPage) {
+      currentPage = page;
+      updateQuickNoteLabel();
+      updateScanNotice();
+    }
+  }
+  let scrollTimer;
+  stage.addEventListener("scroll", () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(onScroll, 120); });
+
+  function goTo(page, fraction = 0) {
+    const p = pages[Math.min(Math.max(Math.floor(page), 1), total) - 1];
+    const offset = fraction ? p.el.offsetHeight * fraction : -12; // a small margin above a page top
+    stage.scrollTop += p.el.getBoundingClientRect().top - stage.getBoundingClientRect().top + offset;
+    onScroll();
   }
 
   function draw(note) {
-    if (!pageEl || note.loc?.type !== "pdf" || note.loc.page !== pageNum) return;
+    if (note.loc?.type !== "pdf") return;
+    const p = pages[note.loc.page - 1];
+    if (!p || p.state !== "drawn") return; // painted when the page is drawn
     undraw(note); // never paint the same highlight twice
-    const layer = pageEl.querySelector(".hl-layer");
+    const layer = p.el.querySelector(".hl-layer");
     for (const r of note.loc.rects ?? []) {
       const d = document.createElement("div");
       d.className = "hl";
@@ -304,16 +399,18 @@ async function openPdf() {
   }
 
   function undraw(note) {
-    pageEl?.querySelectorAll(`.hl[data-note="${note.id}"]`).forEach((d) => d.remove());
+    view.querySelectorAll(`.hl[data-note="${note.id}"]`).forEach((d) => d.remove());
   }
 
-  // When the mouse is released over the page, look at what is selected.
+  // When the mouse is released over a page, look at what is selected.
   document.addEventListener("mouseup", (e) => {
     if (e.target.closest("#selection-bar")) return;
     setTimeout(() => {
       const sel = window.getSelection();
       const text = sel.toString().replace(/\s+/g, " ").trim();
-      if (!pageEl || sel.isCollapsed || !text || !pageEl.contains(sel.anchorNode)) {
+      const anchor = sel.anchorNode?.nodeType === 1 ? sel.anchorNode : sel.anchorNode?.parentElement;
+      const pageEl = anchor?.closest?.(".pdf-page");
+      if (sel.isCollapsed || !text || !pageEl || !view.contains(pageEl)) {
         if ($("selection-comment").hidden) hideSelectionBar();
         return;
       }
@@ -325,8 +422,10 @@ async function openPdf() {
           y: (r.top - box.top) / box.height,
           w: r.width / box.width,
           h: r.height / box.height,
-        }));
-      const page = pageNum;
+        }))
+        // A selection that runs onto the next page keeps only the part on this page.
+        .filter((r) => r.y >= -0.01 && r.y < 1);
+      const page = Number(pageEl.dataset.page);
       offerHighlight({
         quote: text,
         where: async () => ({ page, page_kind: "pdf" }),
@@ -336,28 +435,46 @@ async function openPdf() {
     }, 0);
   });
 
-  $("prev").onclick = () => render(pageNum - 1);
-  $("next").onclick = () => render(pageNum + 1);
-  pageInput.addEventListener("change", () => render(Number(pageInput.value) || 1));
-  $("zoom-in").onclick = () => { zoom = Math.min(zoom + 0.2, 3); render(pageNum); };
-  $("zoom-out").onclick = () => { zoom = Math.max(zoom - 0.2, 0.4); render(pageNum); };
+  // Zoom keeps the reader on the same spot of the same page.
+  function rezoom(next) {
+    const { page, fraction } = readPosition();
+    zoom = next;
+    for (const p of pages) freePage(p);
+    layout();
+    goTo(page, fraction);
+    watchPages();
+  }
+
+  $("prev").onclick = () => goTo(currentPage - 1);
+  $("next").onclick = () => goTo(currentPage + 1);
+  pageInput.addEventListener("change", () => goTo(Number(pageInput.value) || 1));
+  $("zoom-in").onclick = () => rezoom(Math.min(zoom + 0.2, 3));
+  $("zoom-out").onclick = () => rezoom(Math.max(zoom - 0.2, 0.4));
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea")) return;
-    if (e.key === "ArrowRight" || e.key === "PageDown") render(pageNum + 1);
-    if (e.key === "ArrowLeft" || e.key === "PageUp") render(pageNum - 1);
+    if (e.key === "ArrowRight") goTo(currentPage + 1);
+    if (e.key === "ArrowLeft") goTo(currentPage - 1);
   });
   let resizeTimer;
-  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => render(pageNum), 200); });
+  let lastWidth = stage.clientWidth;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (stage.clientWidth !== lastWidth) { lastWidth = stage.clientWidth; rezoom(zoom); } }, 200);
+  });
 
-  await render(pageNum);
+  const saved = Number(book.last_location) || 1;
+  goTo(saved, saved % 1);
 
   return {
-    where: async () => ({ page: pageNum, page_kind: "pdf" }),
+    where: async () => ({ page: currentPage, page_kind: "pdf" }),
     draw,
     undraw,
     jump: (note) => {
       const target = note.loc?.page ?? note.page;
-      if (target) render(target);
+      if (!target) return;
+      // Land a little above the highlight, when there is one.
+      const y = note.loc?.rects?.[0]?.y;
+      goTo(target, y ? Math.max(y - 0.05, 0) : 0);
     },
   };
 }
@@ -406,11 +523,12 @@ async function openEpub() {
   view.hidden = false;
   const data = await (await fetch(`/api/books/${book.id}/file`)).arrayBuffer();
   const epub = ePub(data);
+  // One long column: chapters follow each other and the reader scrolls down.
   const rendition = epub.renderTo(view, {
     width: "100%",
     height: "100%",
-    spread: "none",
-    flow: "paginated",
+    manager: "continuous",
+    flow: "scrolled",
     allowScriptedContent: false,
   });
   await epub.ready;

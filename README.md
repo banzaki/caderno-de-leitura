@@ -32,8 +32,25 @@ Everything lives in the `data/` folder (never committed to Git):
 
 Backup: close the app and copy the `data/` folder.
 
+When a new version of the app needs to upgrade the database, it first saves a copy in
+`data/backups/`.
+
 Deleting a book (button on the book page) also deletes its notes, its reading entries and
 its file. It cannot be undone, so the app asks first.
+
+## Reading queue
+
+The Queue page lists the books you plan to read, in order. "Start reading" moves a book to
+Reading. To fill it, import a plain text file with one book per line:
+
+    [ ] 1. Title — Author
+
+Books the notebook already has are skipped (same title, or exactly the same two or more
+authors, which catches a translated title). Importing the same file twice adds nothing.
+
+## Reading
+
+The reader scrolls down through the book (PDF and EPUB) and reopens where you stopped.
 
 ## Page numbers in highlights
 

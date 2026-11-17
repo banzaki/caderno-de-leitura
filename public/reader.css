@@ -12,11 +12,13 @@
 .panel .note:hover blockquote { background: #fbf1c4; }
 .panel .note.active { background: var(--accent-soft); margin: 0 -0.5rem; padding-left: 0.5rem; padding-right: 0.5rem; border-radius: 8px; }
 
-.notice { margin: 0.75rem auto 0; max-width: 760px; background: var(--partial); color: #5e4a12;
-  padding: 0.5rem 0.9rem; border-radius: 8px; font-size: 0.875rem; }
+/* Stays at the top of the screen while the book scrolls under it. */
+.notice { position: sticky; top: 0.6rem; z-index: 5; margin: 0.75rem auto 0; max-width: 760px; background: var(--partial); color: #5e4a12;
+  padding: 0.5rem 0.9rem; border-radius: 8px; font-size: 0.875rem; box-shadow: 0 2px 8px rgb(0 0 0 / 0.12); }
 
 /* PDF */
 .pdf-view { padding: 1rem; display: flex; justify-content: center; }
+.pdf-view.continuous { flex-direction: column; align-items: center; gap: 1rem; padding-bottom: 40vh; }
 .pdf-page { position: relative; background: #fff; box-shadow: 0 2px 12px rgb(0 0 0 / 0.15); }
 .pdf-page canvas { display: block; }
 .pdf-page .hl-layer { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
