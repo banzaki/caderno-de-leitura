@@ -189,11 +189,17 @@ export function createApp({ dataDir }) {
 
   // Where a book goes when its status is set: the end of the queue, the end of the desk,
   // or the library with the day it was finished. Unchanged status keeps its place.
+  // A book leaving the queue remembers its place there; coming back, it returns to that
+  // place (the books from there on move down one), or to the end if it never had one.
   function placeFor(status, current, finishedOn) {
     const same = status === current.status;
     const onDesk = (s) => s === "reading" || s === "paused";
+    const end = q.lastQueuePosition.get().n + 1;
+    const backTo = current.queue_left_position ? Math.min(current.queue_left_position, end) : end;
     return {
-      queuePosition: status !== "queued" ? null : same ? current.queue_position : q.lastQueuePosition.get().n + 1,
+      queuePosition: status !== "queued" ? null : same ? current.queue_position : backTo,
+      queueLeftPosition: status === "queued" ? null
+        : current.status === "queued" ? current.queue_position : (current.queue_left_position ?? null),
       deskPosition: !onDesk(status) ? null : onDesk(current.status) ? current.desk_position : q.lastDeskPosition.get().n + 1,
       finishedAt: status !== "finished" ? null : same && current.finished_at ? current.finished_at : finishedOn,
     };
@@ -248,12 +254,18 @@ export function createApp({ dataDir }) {
       const lastLocation = body.last_location !== undefined
         ? cleanText(String(body.last_location), 2000)
         : current.last_location;
-      // Joining the queue or the desk puts the book at the end; leaving closes the gap.
+      // Joining the desk puts the book at the end; joining the queue puts it back where it
+      // was (or at the end); leaving either closes the gap.
       const place = placeFor(f.status, current, finishedDay(body.finished_on));
       inTransaction(() => {
+        if (f.status === "queued" && current.status !== "queued") {
+          db.prepare("UPDATE books SET queue_position = queue_position + 1 WHERE status = 'queued' AND queue_position >= ?")
+            .run(place.queuePosition);
+        }
         db.prepare(`UPDATE books SET title = ?, author = ?, total_pages = ?, status = ?, queue_position = ?,
-          desk_position = ?, finished_at = ?, last_location = ? WHERE id = ?`)
-          .run(f.title, f.author, f.totalPages, f.status, place.queuePosition, place.deskPosition, place.finishedAt, lastLocation, id);
+          queue_left_position = ?, desk_position = ?, finished_at = ?, last_location = ? WHERE id = ?`)
+          .run(f.title, f.author, f.totalPages, f.status, place.queuePosition, place.queueLeftPosition,
+            place.deskPosition, place.finishedAt, lastLocation, id);
         if (f.status !== current.status) {
           compactQueue();
           compactDesk();

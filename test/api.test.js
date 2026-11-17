@@ -232,6 +232,50 @@ test("reading desk: main book, moving, pausing, finishing to the library, readin
   }
 });
 
+test("back to queue: a book started from the queue returns to its own place", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "caderno-back-"));
+  const app2 = createApp({ dataDir: dir });
+  await new Promise((r) => app2.server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${app2.server.address().port}`;
+  const call = async (method, path, body) => (await fetch(url + path, {
+    method, headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body),
+  })).json();
+  const queue = async () => (await call("GET", "/api/queue")).map((b) => `${b.queue_position}:${b.title}`);
+  try {
+    await call("POST", "/api/queue/import", { text: "[ ] 1. One\n[ ] 2. Two\n[ ] 3. Three\n[ ] 4. Four" });
+    const two = (await call("GET", "/api/queue"))[1];
+
+    // Start reading "Two": it leaves the queue and remembers place 2.
+    const started = await call("PATCH", `/api/books/${two.id}`, { status: "reading" });
+    assert.equal(started.queue_left_position, 2);
+    assert.deepEqual(await queue(), ["1:One", "2:Three", "3:Four"]);
+
+    // Back to queue: exactly where it was, the others move down.
+    const back = await call("PATCH", `/api/books/${two.id}`, { status: "queued" });
+    assert.equal(back.queue_position, 2);
+    assert.equal(back.queue_left_position, null);
+    assert.equal(back.desk_position, null);
+    assert.deepEqual(await queue(), ["1:One", "2:Two", "3:Three", "4:Four"]);
+
+    // A remembered place past the end of a shorter queue becomes the end.
+    const four = (await call("GET", "/api/queue"))[3];
+    await call("PATCH", `/api/books/${four.id}`, { status: "reading" });
+    const one = (await call("GET", "/api/queue"))[0];
+    await call("DELETE", `/api/books/${one.id}`);
+    await call("PATCH", `/api/books/${four.id}`, { status: "queued" });
+    assert.deepEqual(await queue(), ["1:Two", "2:Three", "3:Four"]);
+
+    // A book that was never in the queue goes to the end.
+    const fresh = await call("POST", "/api/books", { title: "Fresh" });
+    await call("PATCH", `/api/books/${fresh.id}`, { status: "queued" });
+    assert.deepEqual(await queue(), ["1:Two", "2:Three", "3:Four", "4:Fresh"]);
+  } finally {
+    app2.server.close();
+    app2.db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Bruno's real queue file, when it is on this computer (read only, imported into the temporary test database).
 const REAL_QUEUE = "C:/Users/qbbru/Documents/Leitura/fila-de-leitura.txt";
 test("the real queue file imports all 307 books, in order, only once", { skip: !existsSync(REAL_QUEUE) && "real queue file not on this computer" }, async () => {

@@ -55,10 +55,37 @@ async function renderToday() {
   const left = Math.max(stats.goal - stats.today.pages, 0);
   const percent = Math.min(100, Math.round((stats.today.pages / stats.goal) * 100));
 
-  const lastRead = reading.find((b) => b.file_type) ?? null;
+  const main = reading[0] ?? null; // the main book of the reading desk
+  const next = main ? null : books.find((b) => b.status === "queued" && b.queue_position === 1) ?? null;
 
   view.innerHTML = `
-    <div class="grid two">
+    ${main ? `
+    <section class="card desk-main reading-now">
+      <a href="#/book/${main.id}" class="desk-cover">${coverHtml(main)}</a>
+      <div style="min-width:0">
+        <div class="eyebrow">Reading now</div>
+        <h2><a href="#/book/${main.id}">${esc(main.title)}</a></h2>
+        <div class="author">${esc(main.author) || "Unknown author"}</div>
+        ${bookProgress(main)}
+        <div class="actions">
+          ${main.file_type ? `<a class="button big" href="/reader.html?book=${main.id}">Continue reading</a>` : ""}
+          <a class="button ${main.file_type ? "secondary" : "big"}" href="#/book/${main.id}">Open the book</a>
+          ${reading.length > 1 ? `<a class="muted small" href="#/books">${reading.length - 1} more on your desk</a>` : ""}
+        </div>
+      </div>
+    </section>` : next ? `
+    <section class="card desk-main reading-now">
+      <a href="#/book/${next.id}" class="desk-cover">${coverHtml(next)}</a>
+      <div style="min-width:0">
+        <div class="eyebrow">Up next in your queue</div>
+        <h2><a href="#/book/${next.id}">${esc(next.title)}</a></h2>
+        <div class="author">${esc(next.author) || "Unknown author"}</div>
+        <div class="actions"><button class="big" id="start-next">Start reading</button>
+          <a class="button secondary" href="#/queue">See the queue</a></div>
+      </div>
+    </section>` : ""}
+
+    <div class="grid two ${main || next ? "section" : ""}">
       <section class="card">
         <div class="hero">
           <div class="ring ${left === 0 ? "done" : ""}" style="--p:${percent}"><div><div><strong>${stats.today.pages}</strong><br><span class="muted small">of ${stats.goal} pages</span></div></div></div>
@@ -69,7 +96,6 @@ async function renderToday() {
               <div class="stat"><div class="big-number">${stats.streak}</div><div class="muted small">day streak</div></div>
               <div class="stat"><div class="big-number">${stats.days_met}</div><div class="muted small">days on goal</div></div>
             </div>
-            ${lastRead ? `<a class="button secondary" style="margin-top:1rem" href="/reader.html?book=${lastRead.id}" title="${esc(lastRead.title)}">Continue reading</a>` : ""}
           </div>
         </div>
       </section>
@@ -107,6 +133,16 @@ async function renderToday() {
     </div>`;
 
   renderCalendar(stats);
+
+  document.getElementById("start-next")?.addEventListener("click", async () => {
+    try {
+      await api("PATCH", `/api/books/${next.id}`, { status: "reading" });
+      toast(`Now reading: ${next.title}`);
+      route();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 
   const form = document.getElementById("log-form");
   if (form) {
@@ -446,6 +482,10 @@ async function renderBook(id) {
   const book = await api("GET", `/api/books/${id}`);
   const total = book.sessions.reduce((sum, s) => sum + s.pages, 0);
   const onDesk = book.status === "reading" || book.status === "paused";
+  // A book taken from the queue can go back to its own place there (an undo).
+  const queueButton = book.queue_left_position
+    ? `<button class="secondary" data-book-action="queued" title="Back to place ${book.queue_left_position} in the queue">Back to queue</button>`
+    : '<button class="secondary" data-book-action="queued">Move to queue</button>';
   setActiveNav(book.status === "queued" ? "queue" : "books");
 
   view.innerHTML = `
@@ -471,8 +511,8 @@ async function renderBook(id) {
             <label class="button secondary" for="file-input" style="margin:0">${book.file_type ? "Replace file" : "Attach PDF or EPUB"}</label>
             <input id="file-input" class="visually-hidden" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip">
             ${{
-              reading: '<button class="secondary" data-book-action="finish">Mark as finished</button>',
-              paused: '<button class="secondary" data-book-action="reading">Resume reading</button><button class="secondary" data-book-action="finish">Mark as finished</button>',
+              reading: `<button class="secondary" data-book-action="finish">Mark as finished</button>${queueButton}`,
+              paused: `<button class="secondary" data-book-action="reading">Resume reading</button><button class="secondary" data-book-action="finish">Mark as finished</button>${queueButton}`,
               finished: '<button class="secondary" data-book-action="reading">Read again</button>',
               queued: '<button class="secondary" data-book-action="reading">Start reading</button>',
             }[book.status]}
@@ -530,8 +570,9 @@ async function renderBook(id) {
           if (!confirm(`Mark "${book.title}" as finished and move it to your library?`)) return;
           await markFinished(book);
         } else {
-          await api("PATCH", `/api/books/${id}`, { status: btn.dataset.bookAction });
-          toast(book.status === "finished" ? "Back on your reading desk." : "On your reading desk.");
+          const updated = await api("PATCH", `/api/books/${id}`, { status: btn.dataset.bookAction });
+          toast(updated.status === "queued" ? `Back in the queue, at place ${updated.queue_position}.`
+            : book.status === "finished" ? "Back on your reading desk." : "On your reading desk.");
         }
         route();
       } catch (err) {
@@ -573,7 +614,10 @@ async function renderBook(id) {
     if (book.file_type) parts.push("its file");
     const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
     const also = parts.length ? `\n\nThis also deletes ${list}.` : "";
-    if (!confirm(`Delete "${book.title}"?${also}\n\nThis cannot be undone.`)) return;
+    const keep = book.queue_left_position
+      ? "\n\nTo keep it for later instead, cancel and use \"Back to queue\": it returns to its place in the queue."
+      : "";
+    if (!confirm(`Delete "${book.title}"?${also}\n\nThis cannot be undone.${keep}`)) return;
     try {
       await api("DELETE", `/api/books/${id}`);
       toast("Book deleted.");

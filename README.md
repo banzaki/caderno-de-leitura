@@ -44,7 +44,9 @@ The Books page is your reading desk: the main book on top (the default for "Log 
 "Continue reading"), the other books you are reading ("Make main" or the arrows change the
 order), and the paused ones. Finished books move to the library below, with the day you
 finished. Log pages on Today or on the book's own page; reaching the last page offers to
-finish the book. "Read again" puts a finished book back on the desk.
+finish the book. "Read again" puts a finished book back on the desk. Today opens with the book you are reading
+(or, with an empty desk, the next book in the queue). A book started from the queue can go
+"Back to queue", to the same place it had there.
 
 ## Reading queue
 
