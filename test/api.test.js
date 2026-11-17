@@ -1,6 +1,6 @@
 // End-to-end test of the API against a real server and a temporary database.
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -132,6 +132,74 @@ test("EPUB notes can use pages counted by the app, and the notes list says which
   await api("PUT", `/api/books/${id}/file`, new TextEncoder().encode("PK fake"), { "X-File-Name": "book.epub" });
   const after = (await api("GET", "/api/notes")).data.find((n) => n.id === note.data.id);
   assert.equal(after.file_type, "epub");
+});
+
+test("queue: import without duplicates, keep order, start reading closes the gap", async () => {
+  await api("POST", "/api/books", { title: "How to Read a Book", author: "Mortimer J. Adler, Charles Van Doren" });
+  const text = [
+    "[ ] 1. Como Ler Livros — Mortimer J. Adler e Charles Van Doren",
+    "[ ] 2. Meditações — Marco Aurélio",
+    "[ ] 3. A Morte de Ivan Ilitch — Liev Tolstói",
+    "[ ] 4. Guerra e Paz — Liev Tolstói",
+    "[x] 5. Already read — Someone",
+    "not a book line",
+  ].join("\n");
+  const first = await api("POST", "/api/queue/import", { text });
+  assert.equal(first.status, 200);
+  assert.equal(first.data.added, 3); // Tolstoy twice is fine: different titles
+  assert.deepEqual(first.data.skipped.map((s) => [s.number, s.reason]), [[1, "same authors"], [5, "checked as read in the file"]]);
+  assert.equal(first.data.invalid.length, 1);
+
+  let queue = (await api("GET", "/api/queue")).data;
+  assert.deepEqual(queue.map((b) => [b.queue_position, b.title]), [[1, "Meditações"], [2, "A Morte de Ivan Ilitch"], [3, "Guerra e Paz"]]);
+
+  // Importing the same file again adds nothing.
+  const again = await api("POST", "/api/queue/import", { text });
+  assert.equal(again.data.added, 0);
+  assert.equal((await api("GET", "/api/queue")).data.length, 3);
+
+  // "Start reading" on the first one: it leaves the queue and the others move up.
+  const started = await api("PATCH", `/api/books/${queue[0].id}`, { status: "reading" });
+  assert.equal(started.data.status, "reading");
+  assert.equal(started.data.queue_position, null);
+  queue = (await api("GET", "/api/queue")).data;
+  assert.deepEqual(queue.map((b) => [b.queue_position, b.title]), [[1, "A Morte de Ivan Ilitch"], [2, "Guerra e Paz"]]);
+
+  // A new queued book goes to the end; deleting one closes the gap.
+  const added = await api("POST", "/api/books", { title: "Sidarta", status: "queued" });
+  assert.equal(added.data.queue_position, 3);
+  await api("DELETE", `/api/books/${queue[0].id}`);
+  queue = (await api("GET", "/api/queue")).data;
+  assert.deepEqual(queue.map((b) => [b.queue_position, b.title]), [[1, "Guerra e Paz"], [2, "Sidarta"]]);
+
+  assert.equal((await api("POST", "/api/queue/import", { text: "nothing here" })).status, 400);
+});
+
+// Bruno's real queue file, when it is on this computer (read only, imported into the temporary test database).
+const REAL_QUEUE = "C:/Users/qbbru/Documents/Leitura/fila-de-leitura.txt";
+test("the real queue file imports all 307 books, in order, only once", { skip: !existsSync(REAL_QUEUE) && "real queue file not on this computer" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "caderno-real-queue-"));
+  const real = createApp({ dataDir: dir });
+  await new Promise((r) => real.server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${real.server.address().port}`;
+  const post = async (path, body) => (await fetch(url + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+  try {
+    const text = readFileSync(REAL_QUEUE, "utf8");
+    const result = await post("/api/queue/import", { text });
+    assert.equal(result.added, 307);
+    assert.deepEqual(result.skipped, []);
+    assert.deepEqual(result.invalid, []);
+    const queue = await (await fetch(`${url}/api/queue`)).json();
+    assert.equal(queue.length, 307);
+    assert.deepEqual(queue.map((b) => b.queue_position), Array.from({ length: 307 }, (_, i) => i + 1));
+    assert.equal(queue[0].title, "Como Ler Livros");
+    assert.equal(queue[306].title, "Biografia de Einstein");
+    assert.equal((await post("/api/queue/import", { text })).added, 0);
+  } finally {
+    real.server.close();
+    real.db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("static files and path traversal", async () => {

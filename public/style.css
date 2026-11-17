@@ -228,6 +228,22 @@ details.edit[open] summary::before { transform: rotate(90deg); }
 details.edit .fields { margin-top: 0.9rem; }
 .file-line { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--muted); margin-top: 0.6rem; overflow-wrap: anywhere; }
 
+/* ---------- Queue */
+.queue-list { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+.queue-list li { display: grid; grid-template-columns: 3rem 1fr auto; gap: 0.9rem; align-items: center;
+  padding: 0.7rem 0; border-bottom: 1px solid var(--line); }
+.queue-list li:last-child { border-bottom: none; }
+.queue-pos { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; color: var(--muted); text-align: right;
+  font-variant-numeric: tabular-nums; }
+.queue-list li:first-child .queue-pos { color: var(--accent); }
+.queue-book { color: inherit; text-decoration: none; min-width: 0; }
+.queue-book strong { display: block; font-family: var(--serif); font-weight: 600; font-size: 1.05rem; line-height: 1.25; overflow-wrap: anywhere; }
+.queue-book:hover strong { color: var(--accent); }
+.queue-list button { padding: 0.4rem 0.85rem; font-size: 0.9rem; }
+.import-result { margin-top: 1rem; background: var(--accent-soft); border-radius: var(--radius-sm); padding: 0.75rem 1rem; }
+.import-result ul { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.9rem; }
+code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.9em; background: #f1ebe0; padding: 0.05rem 0.35rem; border-radius: 5px; }
+
 /* ---------- Notes */
 .note { padding: 1rem 0; border-bottom: 1px solid var(--line); }
 .note:last-child { border-bottom: none; }
@@ -265,4 +281,7 @@ details.edit .fields { margin-top: 0.9rem; }
   .book-hero .cover { width: 120px; font-size: 0.72rem; }
   .book-hero h1 { font-size: 1.45rem; }
   .books { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .topbar nav a { padding: 0.35rem 0.6rem; }
+  .queue-list li { grid-template-columns: 2.2rem 1fr; gap: 0.25rem 0.6rem; }
+  .queue-list button { grid-column: 2; justify-self: start; }
 }

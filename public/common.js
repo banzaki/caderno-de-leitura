@@ -53,7 +53,7 @@ export function noteLocationLabel(note) {
   return "No page";
 }
 
-export const STATUS_LABELS = { reading: "Reading", finished: "Finished", paused: "Paused" };
+export const STATUS_LABELS = { reading: "Reading", queued: "In queue", paused: "Paused", finished: "Finished" };
 
 export function formatDate(date) {
   const [y, m, d] = date.split("-").map(Number);

@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { BOOK_STATUSES, openDatabase } from "./db.js";
+import { findExisting, parseQueueText } from "./queue.js";
 import { DAILY_GOAL, addDays, computeStreak, isValidDate, pagesBetween, validateSession } from "./stats.js";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -115,15 +116,20 @@ export function createApp({ dataDir }) {
         COALESCE((SELECT MAX(to_page) FROM sessions s WHERE s.book_id = b.id), 0) AS current_page,
         (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
       FROM books b
-      ORDER BY CASE b.status WHEN 'reading' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, b.title COLLATE NOCASE`),
+      ORDER BY CASE b.status WHEN 'reading' THEN 0 WHEN 'paused' THEN 1 WHEN 'finished' THEN 2 ELSE 3 END,
+        b.queue_position, b.title COLLATE NOCASE`),
+    queue: db.prepare(`
+      SELECT b.*, (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
+      FROM books b WHERE b.status = 'queued' ORDER BY b.queue_position, b.id`),
     getBook: db.prepare(`
       SELECT b.*,
         COALESCE((SELECT MAX(to_page) FROM sessions s WHERE s.book_id = b.id), 0) AS current_page,
         (SELECT COUNT(*) FROM notes n WHERE n.book_id = b.id) AS note_count
       FROM books b WHERE b.id = ?`),
     insertBook: db.prepare(
-      "INSERT INTO books (title, author, total_pages, status) VALUES (?, ?, ?, ?) RETURNING id",
+      "INSERT INTO books (title, author, total_pages, status, queue_position) VALUES (?, ?, ?, ?, ?) RETURNING id",
     ),
+    lastQueuePosition: db.prepare("SELECT COALESCE(MAX(queue_position), 0) AS n FROM books WHERE status = 'queued'"),
     sessionsForBook: db.prepare("SELECT * FROM sessions WHERE book_id = ? ORDER BY date DESC, id DESC"),
     recentSessions: db.prepare(`
       SELECT s.*, b.title FROM sessions s JOIN books b ON b.id = s.book_id
@@ -154,6 +160,27 @@ export function createApp({ dataDir }) {
     return book;
   }
 
+  // Queue positions stay 1, 2, 3... with no gaps, in their current order.
+  function compactQueue() {
+    const ids = db.prepare("SELECT id FROM books WHERE status = 'queued' ORDER BY queue_position, id").all();
+    const set = db.prepare("UPDATE books SET queue_position = ? WHERE id = ?");
+    ids.forEach(({ id }, i) => set.run(i + 1, id));
+    db.prepare("UPDATE books SET queue_position = NULL WHERE status <> 'queued'").run();
+  }
+
+  // Runs fn inside one transaction: all of it is saved, or none of it.
+  function inTransaction(fn) {
+    db.exec("BEGIN");
+    try {
+      const result = fn();
+      db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   function parseBookFields(body, current = {}) {
     const title = body.title !== undefined ? cleanText(body.title, 300) : current.title;
     if (!title) throw new HttpError(400, "The book needs a title.");
@@ -172,7 +199,8 @@ export function createApp({ dataDir }) {
 
     ["POST", /^\/api\/books$/, async (req) => {
       const f = parseBookFields(await readJson(req));
-      const { id } = q.insertBook.get(f.title, f.author, f.totalPages, f.status);
+      const position = f.status === "queued" ? q.lastQueuePosition.get().n + 1 : null;
+      const { id } = q.insertBook.get(f.title, f.author, f.totalPages, f.status, position);
       return [201, q.getBook.get(id)];
     }],
 
@@ -188,29 +216,65 @@ export function createApp({ dataDir }) {
       const lastLocation = body.last_location !== undefined
         ? cleanText(String(body.last_location), 2000)
         : current.last_location;
-      db.prepare("UPDATE books SET title = ?, author = ?, total_pages = ?, status = ?, last_location = ? WHERE id = ?")
-        .run(f.title, f.author, f.totalPages, f.status, lastLocation, id);
+      // Joining the queue puts the book at the end; leaving it closes the gap.
+      const position = f.status !== "queued" ? null
+        : current.status === "queued" ? current.queue_position
+          : q.lastQueuePosition.get().n + 1;
+      inTransaction(() => {
+        db.prepare("UPDATE books SET title = ?, author = ?, total_pages = ?, status = ?, queue_position = ?, last_location = ? WHERE id = ?")
+          .run(f.title, f.author, f.totalPages, f.status, position, lastLocation, id);
+        if (f.status !== current.status) compactQueue();
+      });
       return q.getBook.get(id);
     }],
 
     // Deletes a book with everything that belongs to it: reading sessions, notes and its file.
     ["DELETE", /^\/api\/books\/(\d+)$/, (req, [id]) => {
       requireBook(id);
-      db.exec("BEGIN");
-      try {
+      inTransaction(() => {
         db.prepare("DELETE FROM notes WHERE book_id = ?").run(id);
         db.prepare("DELETE FROM sessions WHERE book_id = ?").run(id);
         db.prepare("DELETE FROM books WHERE id = ?").run(id);
-        db.exec("COMMIT");
-      } catch (err) {
-        db.exec("ROLLBACK");
-        throw err;
-      }
+        compactQueue();
+      });
       for (const ext of [".pdf", ".epub"]) {
         const filePath = join(booksDir, `${id}${ext}`);
         if (existsSync(filePath)) unlinkSync(filePath);
       }
       return { ok: true };
+    }],
+
+    ["GET", /^\/api\/queue$/, () => q.queue.all()],
+
+    // Imports a queue text file ("[ ] 1. Title — Author" per line) at the end of the
+    // queue. Books the notebook already has are skipped and listed with the reason.
+    ["POST", /^\/api\/queue\/import$/, async (req) => {
+      const { text } = await readJson(req);
+      const { entries, invalid } = parseQueueText(text);
+      if (!entries.length) throw new HttpError(400, "No books found. Each line should look like: [ ] 1. Title — Author");
+      const known = q.listBooks.all();
+      const added = [];
+      const skipped = [];
+      inTransaction(() => {
+        let position = q.lastQueuePosition.get().n;
+        for (const entry of entries) {
+          if (entry.done) {
+            skipped.push({ ...entry, reason: "checked as read in the file" });
+            continue;
+          }
+          const match = findExisting(entry, known);
+          if (match) {
+            skipped.push({ ...entry, reason: match.reason, existing: { id: match.book.id, title: match.book.title } });
+            continue;
+          }
+          position += 1;
+          const { id } = q.insertBook.get(entry.title, entry.author, null, "queued", position);
+          const book = { id, title: entry.title, author: entry.author, status: "queued" };
+          known.push(book);
+          added.push(book);
+        }
+      });
+      return { added: added.length, skipped, invalid };
     }],
 
     ["PUT", /^\/api\/books\/(\d+)\/file$/, async (req, [id]) => {

@@ -2,6 +2,7 @@
 //   #/            Today: goal, streak, log today's reading, calendar
 //   #/books       all books, add a book
 //   #/book/12     one book: details, file, sessions, notes
+//   #/queue       the reading queue, in order; import a queue text file
 //   #/notes       every note, with search
 import { STATUS_LABELS, api, esc, formatDate, noteLocationLabel, toast, todayLocal } from "./common.js";
 import { fileKind, readBookFileInfo } from "./book-file.js";
@@ -24,6 +25,9 @@ async function route() {
     } else if (hash === "#/books") {
       setActiveNav("books");
       await renderBooks();
+    } else if (hash === "#/queue") {
+      setActiveNav("queue");
+      await renderQueue();
     } else if (hash === "#/notes") {
       setActiveNav("notes");
       await renderNotes();
@@ -222,11 +226,13 @@ function coverHtml(book) {
 const FILE_ICON = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 12v6M9 15l3-3 3 3"/></svg>`;
 
 async function renderBooks() {
-  const books = await api("GET", "/api/books");
+  const all = await api("GET", "/api/books");
+  const books = all.filter((b) => b.status !== "queued"); // queued books live on the Queue page
+  const queued = all.length - books.length;
   view.innerHTML = `
     <div class="page-head">
       <div><div class="eyebrow">Your shelf</div><h1>Books</h1></div>
-      <span class="muted">${books.length} book${books.length === 1 ? "" : "s"}</span>
+      <span class="muted">${books.length} book${books.length === 1 ? "" : "s"}${queued ? ` · <a href="#/queue">${queued} in your queue</a>` : ""}</span>
     </div>
     <section class="card">
       <h2>Add a book</h2>
@@ -462,6 +468,108 @@ async function renderBook(id) {
   });
 
   wireNoteActions(view);
+}
+
+// ---------- Queue ----------
+
+// importResult: the report of an import just made, shown above the list.
+async function renderQueue(importResult = null) {
+  const queue = await api("GET", "/api/queue");
+  view.innerHTML = `
+    <div class="page-head">
+      <div><div class="eyebrow">Up next</div><h1>Queue</h1></div>
+      <span class="muted">${queue.length} book${queue.length === 1 ? "" : "s"}</span>
+    </div>
+    <section class="card">
+      ${queue.length ? `<details class="edit" style="margin:0;border:0;padding:0"><summary>Import from a text file</summary>${importForm()}</details>`
+        : `<h2>Import your reading list</h2>${importForm()}`}
+      <div id="import-result"></div>
+    </section>
+    ${queue.length ? `
+    <section class="card section">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="queue-search" type="search" placeholder="Find a book in the queue…" aria-label="Find a book in the queue">
+      </div>
+      <ol class="queue-list" id="queue-list">${queue.map((b) => `
+        <li data-search="${esc(normalizeText(`${b.title} ${b.author}`))}">
+          <span class="queue-pos">${b.queue_position}</span>
+          <a class="queue-book" href="#/book/${b.id}"><strong>${esc(b.title)}</strong>
+            <span class="muted small">${esc(b.author) || "Unknown author"}</span></a>
+          <button class="secondary" data-start="${b.id}">Start reading</button>
+        </li>`).join("")}</ol>
+      <p class="empty-state" id="queue-none" hidden>No book in the queue matches.</p>
+    </section>` : ""}`;
+
+  wireImport();
+  if (importResult) showImportResult(importResult);
+  const search = document.getElementById("queue-search");
+  search?.addEventListener("input", () => {
+    const term = normalizeText(search.value);
+    let shown = 0;
+    for (const li of document.querySelectorAll("#queue-list li")) {
+      li.hidden = Boolean(term) && !li.dataset.search.includes(term);
+      if (!li.hidden) shown++;
+    }
+    document.getElementById("queue-none").hidden = shown > 0;
+  });
+  view.querySelectorAll("[data-start]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const book = await api("PATCH", `/api/books/${btn.dataset.start}`, { status: "reading" });
+        toast(`Now reading: ${book.title}`);
+        await renderQueue();
+      } catch (err) {
+        toast(err.message, true);
+        btn.disabled = false;
+      }
+    }),
+  );
+}
+
+function normalizeText(s) {
+  return String(s ?? "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+}
+
+function importForm() {
+  return `
+    <p class="muted small" style="margin:0.75rem 0">A plain text file with one book per line, like
+      <code>[ ] 1. Title — Author</code>. Books go to the end of the queue in the file's order.
+      Books you already have are skipped.</p>
+    <label class="dropzone" for="queue-file">
+      <span class="icon">${FILE_ICON}</span>
+      <span><strong>Choose the .txt file</strong><span class="muted small">Or drag it here.</span></span>
+      <input id="queue-file" type="file" accept=".txt,text/plain">
+    </label>`;
+}
+
+function wireImport() {
+  const input = document.getElementById("queue-file");
+  const out = document.getElementById("import-result");
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    if (!file) return;
+    out.innerHTML = '<p class="muted">Importing…</p>';
+    try {
+      const result = await api("POST", "/api/queue/import", { text: await file.text() });
+      toast(`${result.added} book${result.added === 1 ? "" : "s"} added to the queue.`);
+      await renderQueue(result);
+    } catch (err) {
+      out.innerHTML = "";
+      toast(err.message, true);
+    }
+  });
+}
+
+function showImportResult(result) {
+  const lines = [
+    ...result.skipped.map((s) => `<li>#${s.number} ${esc(s.title)}: skipped, ${esc(s.reason)}${s.existing ? ` as <a href="#/book/${s.existing.id}">${esc(s.existing.title)}</a>` : ""}</li>`),
+    ...result.invalid.map((s) => `<li>Line ${s.line} was not understood: <code>${esc(s.text)}</code></li>`),
+  ];
+  document.getElementById("import-result").innerHTML = `
+    <div class="import-result"><strong>${result.added} book${result.added === 1 ? "" : "s"} added.</strong>
+      ${lines.length ? `<ul>${lines.join("")}</ul>` : ""}</div>`;
 }
 
 // ---------- Notes ----------
