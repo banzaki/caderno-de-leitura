@@ -4,7 +4,7 @@
 //   #/book/12     one book: details, file, sessions, notes
 //   #/queue       the reading queue, in order; import a queue text file
 //   #/notes       every note, with search
-import { STATUS_LABELS, api, esc, formatDate, noteLocationLabel, toast, todayLocal } from "./common.js";
+import { STATUS_LABELS, api, esc, formatDate, noteLocationLabel, reportOf, toast, todayLocal } from "./common.js";
 import { fileKind, readBookFileInfo } from "./book-file.js";
 import { fieldsToFill } from "./book-meta.js";
 
@@ -28,6 +28,9 @@ async function route() {
     } else if (hash === "#/queue") {
       setActiveNav("queue");
       await renderQueue();
+    } else if (hash.match(/^#\/close\/\d+$/)) {
+      setActiveNav("books");
+      await renderClose(Number(hash.split("/")[2]));
     } else if (hash === "#/trash") {
       setActiveNav("books");
       await renderTrash();
@@ -58,6 +61,7 @@ async function renderToday() {
   const left = Math.max(stats.goal - stats.today.pages, 0);
   const percent = Math.min(100, Math.round((stats.today.pages / stats.goal) * 100));
 
+  const owed = books.filter((b) => b.status === "finished" && !reportOf(b)); // finished, report not written
   const main = reading[0] ?? null; // the main book of the reading desk
   const next = main ? null : books.find((b) => b.status === "queued" && b.queue_position === 1) ?? null;
 
@@ -88,7 +92,12 @@ async function renderToday() {
       </div>
     </section>` : ""}
 
-    <div class="grid two ${main || next ? "section" : ""}">
+    ${owed.length ? `<section class="card owed-card section">
+      <strong>${owed.length === 1 ? "A closing report is owed" : `${owed.length} closing reports are owed`}</strong>
+      <span class="muted"> for ${owed.slice(0, 2).map((b) => `<a href="#/close/${b.id}">${esc(b.title)}</a>`).join(", ")}${owed.length > 2 ? ` and ${owed.length - 2} more` : ""}.</span>
+    </section>` : ""}
+
+    <div class="grid two ${main || next || owed.length ? "section" : ""}">
       <section class="card">
         <div class="hero">
           <div class="ring ${left === 0 ? "done" : ""}" style="--p:${percent}"><div><div><strong>${stats.today.pages}</strong><br><span class="muted small">of ${stats.goal} pages</span></div></div></div>
@@ -271,17 +280,16 @@ function longDate(date) {
   return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-// Moves a book to the library, finished today.
-async function markFinished(book) {
-  await api("PATCH", `/api/books/${book.id}`, { status: "finished", finished_on: todayLocal() });
-  toast(`"${book.title}" is now in your library.`);
+// Finishing a book opens the closing page: review the notes, write the report.
+function closeBook(book) {
+  location.hash = `#/close/${book.id}`;
 }
 
 // After logging pages: when the last page was reached, offer to finish the book.
 async function offerToFinish(book, toPage) {
   if (!book || !book.total_pages || toPage < book.total_pages || book.status === "finished") return;
-  if (!confirm(`You reached the last page of "${book.title}".\n\nMark it as finished and move it to your library?`)) return;
-  await markFinished(book);
+  if (!confirm(`You reached the last page of "${book.title}".\n\nClose the book now? You will review your notes and write a short report.`)) return;
+  closeBook(book);
 }
 
 // One book on a shelf: the cover and details are a link; buttons may follow below it.
@@ -351,7 +359,8 @@ async function renderBooks() {
       <div><div class="eyebrow">Finished books</div><h2 style="font-size:1.6rem;margin:0">Library</h2></div>
     </div>
     ${finished.length ? `<div class="books">${finished.map((b) => bookTile(b, {
-      caption: `<div class="finished-on">${b.finished_at ? `Finished ${longDate(b.finished_at)}` : "Finished"}</div>`,
+      caption: `<div class="finished-on">${b.finished_at ? `Finished ${longDate(b.finished_at)}` : "Finished"}</div>
+        ${reportOf(b) ? "" : '<div><span class="badge owed">Report owed</span></div>'}`,
     })).join("")}</div>`
       : `<div class="card empty-state">Finished books will stand here.</div>`}
 
@@ -388,13 +397,7 @@ async function renderBooks() {
   view.querySelectorAll("[data-finish]").forEach((btn) =>
     btn.addEventListener("click", async () => {
       const book = all.find((b) => b.id === Number(btn.dataset.finish));
-      if (!confirm(`Mark "${book.title}" as finished and move it to your library?`)) return;
-      try {
-        await markFinished(book);
-        route();
-      } catch (err) {
-        toast(err.message, true);
-      }
+      closeBook(book);
     }),
   );
 
@@ -545,6 +548,8 @@ async function renderBook(id) {
       </div>
     </section>
 
+    ${book.status === "finished" ? reportCard(book) : ""}
+
     <div class="grid two section">
       <section class="card">
         ${onDesk ? `
@@ -575,8 +580,8 @@ async function renderBook(id) {
     btn.addEventListener("click", async () => {
       try {
         if (btn.dataset.bookAction === "finish") {
-          if (!confirm(`Mark "${book.title}" as finished and move it to your library?`)) return;
-          await markFinished(book);
+          closeBook(book);
+          return;
         } else {
           const updated = await api("PATCH", `/api/books/${id}`, { status: btn.dataset.bookAction });
           toast(updated.status === "queued" ? `Back in the queue, at place ${updated.queue_position}.`
@@ -679,6 +684,112 @@ Its notes, reading history and file go with it. You can restore it for 30 days.`
   });
 
   wireNoteActions(view);
+}
+
+// ---------- Closing a book ----------
+
+// On the book page of a finished book: the report, or the reminder that it is owed.
+function reportCard(book) {
+  const report = reportOf(book);
+  if (!report) {
+    return `<section class="card section owed-card">
+      <h2>Report owed</h2>
+      <p class="muted">You finished this book without closing it. Review your notes and write how it changed you.</p>
+      <a class="button" href="#/close/${book.id}">Write the report</a></section>`;
+  }
+  return `<section class="card section report">
+    <div class="row spread"><h2 style="margin:0">Closing report</h2>
+      <span class="row" style="gap:0.5rem">${report.rating ? `<span class="stars" title="${report.rating} of 5">${"★".repeat(report.rating)}${"☆".repeat(5 - report.rating)}</span>` : ""}
+      <a class="button secondary" href="#/close/${book.id}">Edit report</a></span></div>
+    ${report.summary ? `<h3>In one sentence</h3><p>${esc(report.summary)}</p>` : ""}
+    ${report.ideas.length ? `<h3>Ideas to keep</h3><ol>${report.ideas.map((i) => `<li>${esc(i)}</li>`).join("")}</ol>` : ""}
+    <h3>How this book changed me</h3><p class="prewrap">${esc(report.change)}</p>
+    ${report.recommend ? `<h3>I would recommend it to</h3><p>${esc(report.recommend)}</p>` : ""}</section>`;
+}
+
+// The closing page: 1) look back at your notes and pick the best ones, 2) write the report.
+async function renderClose(id) {
+  const book = await api("GET", `/api/books/${id}`);
+  const report = reportOf(book);
+  const finished = book.status === "finished";
+  const ideas = [...(report?.ideas ?? []), "", "", ""].slice(0, 3);
+  view.innerHTML = `
+    <a class="back-link" href="#/book/${id}">← ${esc(book.title)}</a>
+    <div class="page-head"><div><div class="eyebrow">${finished ? "Closing report" : "Closing the book"}</div><h1>${esc(book.title)}</h1></div></div>
+
+    <section class="card">
+      <h2>1. Look back at your notes</h2>
+      ${book.notes.length ? `<p class="muted">Read them again. Pick up to 3 that you want to keep as the best of this book.
+        <strong id="picked-count"></strong></p>
+      <div id="close-notes">${book.notes.map((n) => `
+        <label class="note pick" for="pick-${n.id}">
+          <input type="checkbox" id="pick-${n.id}" value="${n.id}" ${n.starred ? "checked" : ""}>
+          <span><span class="page-tag">${esc(noteLocationLabel(n))}</span>
+            ${n.quote ? `<blockquote>${esc(n.quote)}</blockquote>` : ""}
+            ${n.body ? `<div class="body">${esc(n.body)}</div>` : ""}</span>
+        </label>`).join("")}</div>`
+        : '<p class="muted">You took no notes for this book. You can still write the report.</p>'}
+    </section>
+
+    <section class="card section">
+      <h2>2. Pay the price: write the report</h2>
+      <form id="close-form" class="fields">
+        <div class="wide"><label for="c-summary">What is this book about, in one sentence?</label>
+          <input id="c-summary" name="summary" maxlength="1000" value="${esc(report?.summary ?? "")}"></div>
+        <div class="wide"><label>Which 3 ideas will you keep?</label>
+          ${ideas.map((idea, i) => `<input name="idea${i}" maxlength="1000" placeholder="Idea ${i + 1}" value="${esc(idea)}" style="margin-bottom:0.4rem">`).join("")}</div>
+        <div class="wide"><label for="c-change">How did this book change you? What will you do differently? <strong>(required)</strong></label>
+          <textarea id="c-change" name="change" rows="6" maxlength="5000" placeholder="Be honest and specific. This is the price of closing the book.">${esc(report?.change ?? "")}</textarea></div>
+        <div><label for="c-rating">Rating</label><select id="c-rating" name="rating">
+          <option value="">No rating</option>
+          ${[5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${report?.rating === n ? "selected" : ""}>${"★".repeat(n)}${"☆".repeat(5 - n)}  ${n}/5</option>`).join("")}</select></div>
+        <div><label for="c-recommend">Who would you recommend it to?</label>
+          <input id="c-recommend" name="recommend" maxlength="1000" value="${esc(report?.recommend ?? "")}"></div>
+        <div class="wide row" style="gap:0.6rem;flex-wrap:wrap">
+          <button type="submit" class="big">${finished ? "Save report" : "Close the book"}</button>
+          ${finished ? "" : '<button type="button" class="ghost" id="finish-without">Finish without the report</button>'}
+        </div>
+        ${finished ? "" : '<p class="wide muted small" style="margin:0">Finishing without the report is allowed, but the book will show "Report owed" until you write it.</p>'}
+      </form>
+    </section>`;
+
+  const boxes = [...view.querySelectorAll("#close-notes input")];
+  const updatePicks = () => {
+    const n = boxes.filter((b) => b.checked).length;
+    const counter = document.getElementById("picked-count");
+    if (counter) counter.textContent = `${n} of 3 picked.`;
+    for (const b of boxes) b.disabled = !b.checked && n >= 3;
+  };
+  boxes.forEach((b) => b.addEventListener("change", updatePicks));
+  updatePicks();
+
+  const finish = () => api("PATCH", `/api/books/${id}`, { status: "finished", finished_on: todayLocal() });
+  document.getElementById("close-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target.elements;
+    try {
+      await api("PUT", `/api/books/${id}/report`, {
+        summary: f.summary.value, ideas: [f.idea0.value, f.idea1.value, f.idea2.value], change: f.change.value,
+        rating: f.rating.value || null, recommend: f.recommend.value,
+        best_note_ids: boxes.filter((b) => b.checked).map((b) => Number(b.value)),
+      });
+      if (!finished) await finish();
+      toast(finished ? "Report saved." : `"${book.title}" is closed and in your library.`);
+      location.hash = `#/book/${id}`;
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+  document.getElementById("finish-without")?.addEventListener("click", async () => {
+    if (!confirm("Finish the book without the report?\n\nIt goes to your library marked \"Report owed\" until you write it.")) return;
+    try {
+      await finish();
+      toast("Finished. The report is still owed.");
+      location.hash = `#/book/${id}`;
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 }
 
 // ---------- Trash ----------
@@ -908,6 +1019,7 @@ function renderNoteList(notes, showBook) {
         <span class="page-tag">${esc(noteLocationLabel(n))}</span>
         ${showBook ? `<a href="#/book/${n.book_id}">${esc(n.title)}</a>` : ""}
         ${n.source === "highlight" ? '<span class="badge">highlight</span>' : ""}
+        ${n.starred ? '<span class="badge star" title="One of the best notes">★ best</span>' : ""}
         <span style="flex:1"></span>
         ${n.file_type ? '<span class="go">Open in reader ›</span>' : ""}
         <button class="ghost" data-edit-note="${n.id}">Edit</button>

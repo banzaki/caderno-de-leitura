@@ -236,6 +236,14 @@ export function createApp({ dataDir }) {
     return { title, author, totalPages, status };
   }
 
+  function parseReport(json) {
+    try {
+      return json ? JSON.parse(json) : null;
+    } catch {
+      return null;
+    }
+  }
+
   const TRASH_DAYS = 30;
   const daysLeftInTrash = (deletedAt) =>
     Math.max(TRASH_DAYS - Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86400000), 0);
@@ -324,6 +332,33 @@ export function createApp({ dataDir }) {
       return q.getBook.get(id);
     }],
 
+    // The closing report of a book: what it was about, the ideas to keep, how it changed
+    // the reader (required), a rating and who to recommend it to. The best notes (up to 3)
+    // are starred; the others are cleared. Saving again edits the report.
+    ["PUT", /^\/api\/books\/(\d+)\/report$/, async (req, [id]) => {
+      const book = requireBook(id);
+      const body = await readJson(req);
+      const change = cleanText(body.change, 5000);
+      if (!change) throw new HttpError(400, "Say how this book changed you. It is the one part the report cannot skip.");
+      const rating = body.rating === null || body.rating === undefined || body.rating === "" ? null : Number(body.rating);
+      if (rating !== null && !(Number.isInteger(rating) && rating >= 1 && rating <= 5)) throw new HttpError(400, "The rating is from 1 to 5.");
+      const ideas = (Array.isArray(body.ideas) ? body.ideas : []).map((i) => cleanText(i, 1000)).filter(Boolean).slice(0, 5);
+      const best = [...new Set((Array.isArray(body.best_note_ids) ? body.best_note_ids : []).map(Number))];
+      if (best.length > 3) throw new HttpError(400, "Pick at most 3 best notes.");
+      const own = new Set(q.notesForBook.all(id).map((n) => n.id));
+      if (best.some((noteId) => !own.has(noteId))) throw new HttpError(400, "A best note does not belong to this book.");
+      const report = {
+        summary: cleanText(body.summary, 1000), ideas, change, rating,
+        recommend: cleanText(body.recommend, 1000), written_at: new Date().toISOString(),
+      };
+      inTransaction(() => {
+        db.prepare("UPDATE books SET report = ? WHERE id = ?").run(JSON.stringify(report), book.id);
+        db.prepare("UPDATE notes SET starred = 0 WHERE book_id = ?").run(book.id);
+        for (const noteId of best) db.prepare("UPDATE notes SET starred = 1 WHERE id = ?").run(noteId);
+      });
+      return q.getBook.get(id);
+    }],
+
     // Moves a queued book to another place in the queue: { to: 1 } puts it first.
     ["POST", /^\/api\/books\/(\d+)\/queue-move$/, async (req, [id]) => {
       const book = requireBook(id);
@@ -343,7 +378,7 @@ export function createApp({ dataDir }) {
     // The notes of a book as a Markdown download.
     ["GET", /^\/api\/books\/(\d+)\/export$/, (req, [id], res) => {
       const book = requireBook(id);
-      const text = bookToMarkdown(book, q.notesForBook.all(id));
+      const text = bookToMarkdown(book, q.notesForBook.all(id), parseReport(book.report));
       res.writeHead(200, {
         "Content-Type": "text/markdown; charset=utf-8",
         "Content-Disposition": `attachment; filename="${exportFileName(book.title)}"`,

@@ -56,6 +56,15 @@ finish the book. "Read again" puts a finished book back on the desk. Today opens
 "Back to queue", to the same place it had there. On a finished book the finish day can be
 corrected, and "Export notes" downloads its notes as a Markdown file.
 
+## Closing a book
+
+"Mark as finished" (or reaching the last page) opens the closing page. First you read your
+notes again and pick up to 3 as the best. Then you write the report: what the book is about
+in one sentence, 3 ideas to keep, how it changed you (required), a rating, and who you would
+recommend it to. The report shows on the book page and goes into "Export notes". You can also
+"Finish without the report": the book goes to the library marked "Report owed", with a
+reminder on Today, until you write it. Finished books can edit the report later.
+
 ## Reading queue
 
 The Queue page lists the books you plan to read, in order. "Start reading" moves a book to

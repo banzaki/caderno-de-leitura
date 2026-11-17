@@ -322,3 +322,14 @@ code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.9em; back
   touch-action: none; user-select: none; }
 .queue-list li.dragging { background: var(--accent-soft, rgba(0,0,0,0.05)); box-shadow: 0 4px 14px rgba(0,0,0,0.15); border-radius: 8px; position: relative; z-index: 2; }
 .queue-list li.dragging .grip { cursor: grabbing; }
+
+/* Closing a book: notes to pick, the report, and the "owed" reminders. */
+.badge.owed { background: #f6e3c8; color: #7a4a0a; }
+.badge.star { background: #f7e27a; color: #5a4a00; }
+.owed-card { border-left: 4px solid #d98b2b; }
+.stars { color: #c98a14; letter-spacing: 0.1em; }
+.prewrap { white-space: pre-wrap; }
+.report h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 1.1rem 0 0.3rem; }
+.report p, .report ol { margin: 0; }
+label.note.pick { display: flex; gap: 0.75rem; align-items: flex-start; cursor: pointer; }
+label.note.pick input { width: auto; margin-top: 0.3rem; flex: none; }

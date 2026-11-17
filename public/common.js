@@ -53,6 +53,15 @@ export function noteLocationLabel(note) {
   return "No page";
 }
 
+// The closing report of a book (an object), or null when it has none yet.
+export function reportOf(book) {
+  try {
+    return book.report ? JSON.parse(book.report) : null;
+  } catch {
+    return null;
+  }
+}
+
 export const STATUS_LABELS = { reading: "Reading", queued: "In queue", paused: "Paused", finished: "Finished" };
 
 export function formatDate(date) {

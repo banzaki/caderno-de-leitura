@@ -128,3 +128,50 @@ test("daily backup: one copy per day, a readable copy, only the latest 14 kept",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("closing report: 'how it changed me' is required, best notes are starred (max 3), export includes it", async () => {
+  const { id } = (await t.api("POST", "/api/books", { title: "Report Book", author: "A. Writer", status: "reading" })).data;
+  const ids = [];
+  for (const body of ["n1", "n2", "n3", "n4"]) ids.push((await t.api("POST", "/api/notes", { book_id: id, body })).data.id);
+  const put = (data) => t.api("PUT", `/api/books/${id}/report`, data);
+
+  assert.equal((await put({ summary: "About habits", change: "   " })).status, 400, "change is required");
+  assert.equal((await put({ change: "x", rating: 6 })).status, 400);
+  assert.equal((await put({ change: "x", best_note_ids: ids })).status, 400, "at most 3");
+  assert.equal((await put({ change: "x", best_note_ids: [999999] })).status, 400, "must be this book's note");
+
+  const saved = await put({
+    summary: "About habits", ideas: ["one", "", "two"], change: "I will plan my mornings.", rating: 5,
+    recommend: "Anyone who procrastinates", best_note_ids: [ids[0], ids[2]],
+  });
+  assert.equal(saved.status, 200);
+  const report = JSON.parse(saved.data.report);
+  assert.deepEqual(report.ideas, ["one", "two"]);
+  assert.equal(report.rating, 5);
+  const starred = (await t.api("GET", `/api/books/${id}`)).data.notes.filter((n) => n.starred).map((n) => n.body).sort();
+  assert.deepEqual(starred, ["n1", "n3"]);
+
+  // Editing the report replaces the stars.
+  await put({ change: "Changed again", best_note_ids: [ids[1]] });
+  const again = (await t.api("GET", `/api/books/${id}`)).data.notes.filter((n) => n.starred).map((n) => n.body);
+  assert.deepEqual(again, ["n2"]);
+
+  const exported = (await t.api("GET", `/api/books/${id}/export`)).data;
+  assert.match(exported, /## Closing report/);
+  assert.match(exported, /Changed again/);
+  assert.match(exported, /### ★ Note/);
+
+  // A note can also be starred on its own.
+  const patched = await t.api("PATCH", `/api/notes/${ids[3]}`, { starred: true });
+  assert.equal(patched.data.starred, 1);
+  assert.equal(patched.data.body, "n4", "the text is untouched");
+});
+
+test("a finished book without a report can still be finished; the report can come later", async () => {
+  const { id } = (await t.api("POST", "/api/books", { title: "Owes report", status: "reading" })).data;
+  const finished = (await t.api("PATCH", `/api/books/${id}`, { status: "finished", finished_on: "2026-11-15" })).data;
+  assert.equal(finished.status, "finished");
+  assert.equal(finished.report, null, "report still owed");
+  await t.api("PUT", `/api/books/${id}/report`, { change: "Late, but done." });
+  assert.ok((await t.api("GET", `/api/books/${id}`)).data.report);
+});
