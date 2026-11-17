@@ -57,7 +57,7 @@ export function noteLocationLabel(note) {
 export function wireThemeToggle(button) {
   const paint = () => {
     const dark = document.documentElement.dataset.theme === "dark";
-    button.textContent = dark ? "☀ Light" : "☾ Dark";
+    button.innerHTML = dark ? '<span aria-hidden="true">☀</span><span class="toggle-text"> Light</span>' : '<span aria-hidden="true">☾</span><span class="toggle-text"> Dark</span>';
     button.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
   };
   button.addEventListener("click", () => {

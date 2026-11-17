@@ -10,6 +10,7 @@ import { BOOK_STATUSES, openDatabase } from "./db.js";
 import { dailyBackup } from "./backup.js";
 import { bookToMarkdown, exportFileName } from "./export.js";
 import { findExisting, parseQueueText } from "./queue.js";
+import { yearSummary } from "./year.js";
 import { DAILY_GOAL, addDays, computeStreak, isValidDate, pagesBetween, validateSession } from "./stats.js";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -533,6 +534,17 @@ export function createApp({ dataDir }) {
         last7,
         totals,
       };
+    }],
+
+    // "Your year in reading", computed from the data. { years } lists the years that have anything.
+    ["GET", /^\/api\/year\/(\d{4})$/, (req, [year]) => {
+      const books = q.listBooks.all();
+      const sessions = db.prepare(`SELECT s.book_id, s.date, s.pages FROM sessions s
+        JOIN books b ON b.id = s.book_id WHERE b.deleted_at IS NULL`).all();
+      const notes = db.prepare(`SELECT n.id, n.book_id, n.created_at, n.quote, n.body, n.page, n.page_kind, n.starred
+        FROM notes n JOIN books b ON b.id = n.book_id WHERE b.deleted_at IS NULL`).all();
+      const years = new Set([...sessions.map((s) => s.date.slice(0, 4)), ...books.map((b) => b.finished_at?.slice(0, 4))].filter(Boolean).map(Number));
+      return { ...yearSummary({ year, books, sessions, notes }), years: [...years].sort() };
     }],
 
     ["GET", /^\/api\/notes$/, () => q.allNotes.all()],

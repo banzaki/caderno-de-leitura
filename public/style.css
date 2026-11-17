@@ -302,6 +302,10 @@ code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.9em; back
   .topbar { padding: 0.55rem 1rem; }
   .brand { font-size: 1.05rem; }
   .brand span { display: none; }
+  .theme-toggle .toggle-text { display: none; }
+  .topbar { gap: 0.4rem; }
+  .topbar nav { gap: 0; padding: 0.2rem; }
+  .topbar nav a { padding: 0.3rem 0.45rem; font-size: 0.82rem; }
   .hero { flex-direction: column; align-items: flex-start; }
   .book-hero { grid-template-columns: 1fr; gap: 1rem; }
   .book-hero .cover { width: 120px; font-size: 0.72rem; }
@@ -311,7 +315,6 @@ code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.9em; back
   .desk-main .desk-cover { width: 130px; }
   .desk-main .cover { font-size: 0.8rem; }
   .desk-main h2 { font-size: 1.4rem; }
-  .topbar nav a { padding: 0.35rem 0.6rem; }
   .queue-list li { grid-template-columns: 1.4rem 2rem 1fr; gap: 0.25rem 0.5rem; }
   .queue-actions { grid-column: 3; justify-self: start; }
 }
@@ -376,3 +379,37 @@ label.note.pick input { width: auto; margin-top: 0.3rem; flex: none; }
 [data-theme="dark"] .pdf-view .pdf-page { background: #2a2622; }
 [data-theme="dark"] button.secondary, [data-theme="dark"] .button.secondary { color: #8fc9b3; }
 [data-theme="dark"] button.danger { color: var(--danger); }
+
+/* ---------- Year in reading: slides */
+.slide-deck { padding: 0; overflow: hidden; }
+.slide-stage { min-height: 26rem; display: flex; align-items: center; justify-content: center; padding: 2.5rem 1.5rem; text-align: center; color: #fdf8ee; }
+.slide-stage.tone0 { background: linear-gradient(150deg, #2f5d50, #1f4137); }
+.slide-stage.tone1 { background: linear-gradient(150deg, #7a3b2e, #4a2019); }
+.slide-stage.tone2 { background: linear-gradient(150deg, #2e4a6b, #1b2f48); }
+.slide-stage.tone3 { background: linear-gradient(150deg, #8a6a2a, #5a4115); }
+.slide-stage.tone4 { background: linear-gradient(150deg, #5b3f6b, #3a2548); }
+.slide-stage.tone5 { background: linear-gradient(150deg, #8b4a5c, #5a2c3a); }
+.slide-body { max-width: 34rem; width: 100%; }
+.slide-body a { color: #fff; text-decoration-color: rgb(255 255 255 / 0.45); }
+.slide-eyebrow { text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.78rem; opacity: 0.8; margin-bottom: 0.6rem; }
+.slide-giant { font-family: var(--serif); font-size: clamp(4rem, 16vw, 7.5rem); font-weight: 700; line-height: 1; }
+.slide-name { font-family: var(--serif); font-size: clamp(2rem, 8vw, 3.2rem); font-weight: 700; line-height: 1.1; margin: 0.4rem 0; }
+.slide-line { font-size: 1.15rem; margin: 0.8rem 0 0; }
+.slide-small { font-size: 0.9rem; opacity: 0.8; margin: 0.8rem 0 0; }
+.slide-stars { font-size: 2.6rem; color: #f7e27a; letter-spacing: 0.15em; }
+.slide-list { list-style: none; padding: 0; margin: 1rem 0 0; display: grid; gap: 0.5rem; text-align: left; }
+.slide-list li { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid rgb(255 255 255 / 0.2); padding-bottom: 0.4rem; }
+.slide-list span { opacity: 0.75; font-size: 0.85rem; white-space: nowrap; }
+.slide-quote { margin: 1rem 0 0; text-align: left; }
+.slide-quote blockquote { margin: 0; font-family: var(--serif); font-size: 1.15rem; line-height: 1.4; border-left: 3px solid rgb(255 255 255 / 0.5); padding-left: 0.9rem; }
+.slide-quote figcaption { font-size: 0.85rem; opacity: 0.8; margin: 0.35rem 0 0 1.1rem; }
+.month-bars { display: flex; gap: 0.35rem; align-items: flex-end; height: 7rem; margin: 1.2rem 0 0.4rem; }
+.month-bar { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 0.25rem; }
+.month-bar span { width: 100%; background: rgb(255 255 255 / 0.45); border-radius: 4px 4px 0 0; min-height: 2px; }
+.month-bar.best span { background: #f7e27a; }
+.month-bar small { font-size: 0.7rem; opacity: 0.75; }
+.slide-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.8rem 1rem; }
+.dots { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: center; }
+.dot { width: 0.65rem; height: 0.65rem; padding: 0; border-radius: 50%; border: 1px solid var(--line-strong); background: transparent; }
+.dot.on { background: var(--accent); border-color: var(--accent); }
+@media (max-width: 640px) { .slide-stage { min-height: 22rem; padding: 2rem 1rem; } }

@@ -56,6 +56,13 @@ finish the book. "Read again" puts a finished book back on the desk. Today opens
 "Back to queue", to the same place it had there. On a finished book the finish day can be
 corrected, and "Export notes" downloads its notes as a Markdown file.
 
+## Year in reading
+
+The "Year" tab is a slideshow of your year (buttons, dots or arrow keys): books finished, pages,
+days read, longest streak, strongest month, author of the year, favorites, your best notes
+and how your books changed you. Everything is counted from your own data (no AI, no network).
+The best notes are the ones you star when you close a book.
+
 ## Dark mode
 
 The button at the top right (and in the reader) switches between light and dark. With no

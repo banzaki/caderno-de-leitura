@@ -29,6 +29,9 @@ async function route() {
     } else if (hash === "#/queue") {
       setActiveNav("queue");
       await renderQueue();
+    } else if (hash.match(/^#\/year(\/\d{4})?$/)) {
+      setActiveNav("year");
+      await renderYear(Number(hash.split("/")[2]) || new Date().getFullYear());
     } else if (hash.match(/^#\/close\/\d+$/)) {
       setActiveNav("books");
       await renderClose(Number(hash.split("/")[2]));
@@ -685,6 +688,92 @@ Its notes, reading history and file go with it. You can restore it for 30 days.`
   });
 
   wireNoteActions(view);
+}
+
+// ---------- Year in reading ----------
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// Slides, one at a time: use the buttons, the dots or the arrow keys.
+async function renderYear(year) {
+  const y = await api("GET", `/api/year/${year}`);
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const empty = !y.books_finished && !y.pages;
+  const maxMonth = Math.max(...y.per_month, 1);
+  const slides = [];
+
+  slides.push(`<div class="slide-eyebrow">Your reading year</div><div class="slide-giant">${year}</div>
+    <p class="slide-line">${empty ? "Nothing read yet this year. Log some pages and come back." : "Here is how it went."}</p>`);
+  if (!empty) {
+    slides.push(`<div class="slide-eyebrow">Books finished</div><div class="slide-giant">${y.books_finished}</div>
+      ${y.finished.length ? `<ul class="slide-list">${y.finished.slice(0, 8).map((b) => `<li><a href="#/book/${b.id}">${esc(b.title)}</a>
+        <span>${longDate(b.finished_at)}</span></li>`).join("")}</ul>${y.finished.length > 8 ? `<p class="slide-small">and ${y.finished.length - 8} more</p>` : ""}`
+        : '<p class="slide-line">None closed yet. The first one is the hardest.</p>'}`);
+    slides.push(`<div class="slide-eyebrow">Pages read</div><div class="slide-giant">${y.pages.toLocaleString("en-GB")}</div>
+      <p class="slide-line">on ${plural(y.days_read, "day")}, about ${y.pages_per_day} pages each time you sat down.</p>
+      ${y.best_day ? `<p class="slide-small">Your biggest day: ${y.best_day.pages} pages on ${longDate(y.best_day.date)}.</p>` : ""}`);
+    slides.push(`<div class="slide-eyebrow">Your rhythm</div>
+      <div class="slide-giant">${y.longest_streak}</div><p class="slide-line">${y.longest_streak === 1 ? "day" : "days"} in a row, your longest streak.</p>
+      <div class="month-bars" role="img" aria-label="Pages read per month">${y.per_month.map((p, i) => `
+        <div class="month-bar ${y.best_month?.month === i + 1 ? "best" : ""}"><span style="height:${Math.round((p / maxMonth) * 100)}%"></span><small>${MONTHS[i][0]}</small></div>`).join("")}</div>
+      ${y.best_month ? `<p class="slide-small">Strongest month: ${MONTH_NAMES[y.best_month.month - 1]}, ${y.best_month.pages} pages.</p>` : ""}`);
+    if (y.favorite_author) {
+      slides.push(`<div class="slide-eyebrow">Your author of the year</div><div class="slide-name">${esc(y.favorite_author.name)}</div>
+        <p class="slide-line">${plural(y.favorite_author.books, "book")} finished.</p>`);
+    }
+    if (y.top_rated.length) {
+      slides.push(`<div class="slide-eyebrow">Your favorite${y.top_rated.length > 1 ? "s" : ""}</div>
+        <div class="slide-stars">${"★".repeat(y.top_rated[0].rating)}</div>
+        <ul class="slide-list">${y.top_rated.map((b) => `<li><a href="#/book/${b.id}">${esc(b.title)}</a></li>`).join("")}</ul>`);
+    }
+    slides.push(`<div class="slide-eyebrow">Your best notes</div>
+      ${y.best_notes.length ? y.best_notes.slice(0, 5).map((n) => `<figure class="slide-quote">
+          <blockquote>${esc(n.quote || n.body)}</blockquote>
+          <figcaption><a href="#/book/${n.book_id}">${esc(n.title)}</a>${n.page ? ` · ${esc(noteLocationLabel(n))}` : ""}</figcaption></figure>`).join("")
+        : `<p class="slide-line">You wrote ${plural(y.notes_written, "note")}. Pick the best ones when you close a book, and they will show here.</p>`}`);
+    slides.push(`<div class="slide-eyebrow">How your books changed you</div>
+      ${y.changed_me.length ? y.changed_me.slice(0, 5).map((b) => `<figure class="slide-quote">
+          <blockquote class="prewrap">${esc(b.change)}</blockquote>
+          <figcaption><a href="#/book/${b.id}">${esc(b.title)}</a></figcaption></figure>`).join("")
+        : '<p class="slide-line">No closing reports yet. They are the heart of this page.</p>'}
+      ${y.reports_owed ? `<p class="slide-small">${plural(y.reports_owed, "report")} still owed.</p>` : ""}`);
+  }
+
+  view.innerHTML = `
+    <div class="page-head"><div><div class="eyebrow">Wrapped</div><h1>Year in reading</h1></div>
+      <span class="row" style="gap:0.4rem">${[...new Set([...y.years, year])].sort().map((n) =>
+        `<a class="button ${n === year ? "" : "secondary"}" href="#/year/${n}">${n}</a>`).join("")}</span></div>
+    <section class="slide-deck card" aria-roledescription="carousel">
+      <div class="slide-stage" id="slide-stage" aria-live="polite"></div>
+      <div class="slide-nav">
+        <button class="secondary" id="slide-prev" aria-label="Previous">‹</button>
+        <span class="dots" id="slide-dots">${slides.map((_, i) => `<button class="dot" data-slide="${i}" aria-label="Slide ${i + 1}"></button>`).join("")}</span>
+        <button class="secondary" id="slide-next" aria-label="Next">›</button>
+      </div>
+    </section>`;
+
+  let index = 0;
+  const stage = document.getElementById("slide-stage");
+  const show = (i) => {
+    index = Math.min(Math.max(i, 0), slides.length - 1);
+    stage.className = `slide-stage tone${index % 6}`;
+    stage.innerHTML = `<div class="slide-body">${slides[index]}</div>`;
+    document.querySelectorAll("#slide-dots .dot").forEach((d, n) => d.classList.toggle("on", n === index));
+    document.getElementById("slide-prev").disabled = index === 0;
+    document.getElementById("slide-next").disabled = index === slides.length - 1;
+  };
+  document.getElementById("slide-prev").addEventListener("click", () => show(index - 1));
+  document.getElementById("slide-next").addEventListener("click", () => show(index + 1));
+  document.querySelectorAll("#slide-dots .dot").forEach((d) => d.addEventListener("click", () => show(Number(d.dataset.slide))));
+  const onKey = (e) => {
+    if (!document.getElementById("slide-stage")) return window.removeEventListener("keydown", onKey);
+    if (e.target.matches?.("input, textarea, select")) return;
+    if (e.key === "ArrowRight") show(index + 1);
+    if (e.key === "ArrowLeft") show(index - 1);
+  };
+  window.addEventListener("keydown", onKey);
+  show(0);
 }
 
 // ---------- Closing a book ----------
