@@ -4,6 +4,8 @@ A local reading notebook for Don Bruno: books, pages read per day, a 25 pages/da
 streak and a calendar, notes per book and page, and a PDF/EPUB reader where every highlight
 becomes a note with its page.
 
+A tour with screenshots: [docs/almanac.md](docs/almanac.md).
+
 Runs 100% on this computer: no internet, no account, no API, zero cost.
 
 ## How to run
