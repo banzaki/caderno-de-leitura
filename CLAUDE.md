@@ -8,7 +8,7 @@ and a PDF/EPUB reader whose highlights become notes. Single user (Don Bruno), 10
 - `npm start`: start the server on http://localhost:4517 and open the browser.
 - `npm run dev`: start without opening the browser.
 - `npm test`: run all tests (`node:test`).
-- `npm run shortcut`: create the desktop shortcut to `start.cmd`.
+- `npm run shortcut`: create the desktop and Start menu shortcuts; they open the app window via `app.vbs` (`node server.js --app`). `start.cmd` stays as the fallback with a console.
 
 ## Layout
 

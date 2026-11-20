@@ -12,11 +12,15 @@ Runs 100% on this computer: no internet, no account, no API, zero cost.
 
 1. Install [Node.js](https://nodejs.org) 22.13 or newer (tested on 24).
 2. In this folder, once: `npm install`
-3. Start: double-click `start.cmd` (or `npm start`). The browser opens at http://localhost:4517.
-4. Desktop shortcut, once: `npm run shortcut`.
+3. Shortcuts, once: `npm run shortcut`. It puts "Caderno de Leitura" on the desktop and in the
+   Start menu. To keep it on the taskbar, right-click it in the Start menu and choose "Pin to taskbar".
+4. Open it from the shortcut: the notebook opens as an app, in its own window (Microsoft Edge in
+   app mode, no tabs, no address bar, no console). Closing that window stops the app.
 
-Close the "Caderno de Leitura" console window (minimized in the taskbar) to stop the app.
-Opening the shortcut again while the app runs just opens a new browser tab.
+Behind the shortcut is `app.vbs`, which runs `node server.js --app` without a console window.
+If something goes wrong and the window never appears, double-click `start.cmd` instead: it opens
+the notebook in a browser tab and keeps a console window that shows any error
+(close that console to stop the app). `npm start` does the same.
 
 ## Developer scripts
 
